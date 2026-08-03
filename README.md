@@ -55,7 +55,7 @@ rustup target add x86_64-unknown-linux-gnu
 sudo pacman -S clang llvm mold binutils curl
 
 # Install the script
-curl -o ~/.local/bin/krabby https://raw.githubusercontent.com/<you>/<repo>/main/krabby
+curl -o ~/.local/bin/krabby https://raw.githubusercontent.com/elseawhy/krabby/refs/heads/main/krabby
 chmod +x ~/.local/bin/krabby
 ```
 
