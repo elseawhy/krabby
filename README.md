@@ -127,4 +127,4 @@ Per-project overrides: drop a `.v3compile` or `.compile-option` file (containing
 
 ## License
 
-Add your license of choice here.
+[MIT License](https://github.com/elseawhy/krabby/blob/main/LICENSE)
