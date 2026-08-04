@@ -18,6 +18,7 @@ Built for machines where you're willing to trade portability and compile time fo
 - **Crate update checking** (`krabby update`): checks `crates.io` for newer versions of every `cargo install`-ed binary and recompiles anything out of date.
 - **Special-cased `sudo-rs` upgrades**: backs up the existing `sudo` binary, verifies the new one actually works before committing, and restores the backup automatically if compilation or verification fails.
 - **Optional dotfile sync** (`KRABBY_SYNC_ENABLED`): can track the diff of installed cargo binaries into a pkglist file, similar to how Arch users track `pacman` package lists.
+- **Ultra-lean execution**: Heavily optimized to use pure Bash built-ins (associative arrays, string manipulation, `coproc`) instead of spawning external GNU utilities (`sed`, `comm`, `awk`) to minimize process forks. Includes safe, instant state cleanup on `Ctrl+C`.
 
 ## Requirements
 
@@ -36,7 +37,7 @@ Built for machines where you're willing to trade portability and compile time fo
 | [`mold`](https://github.com/rui314/mold) | Linker, invoked via `-fuse-ld=mold` in `LDFLAGS` |
 | `objdump` (binutils) | Disassembles built binaries to count SIMD/BMI2 instructions when probing profiles |
 | `curl` | Fetches latest crate versions from crates.io in `krabby update` |
-| Standard POSIX/GNU utilities | `awk`, `sed`, `grep`, `comm`, `mktemp`, `find`, `printf` — present on virtually any Linux distro |
+| Standard POSIX/GNU utilities | `grep`, `mktemp`, `printf`, `sort`, `cp`, `mv`, `rm` — present on virtually any Linux distro |
 
 ### Optional
 
@@ -65,7 +66,7 @@ chmod +x ~/.local/bin/krabby
 
 ```bash
 krabby                    # Build the local project (release, autodetects Cargo.toml)
-krabby install <crate>    # Install/compile a crate from crates.io with FFI profiling
+krabby install <crate>[@version]  # Install/compile a crate from crates.io with FFI profiling
 krabby uninstall <crate>  # Uninstall a crate
 krabby update             # Check crates.io and upgrade all installed binaries
 krabby list                # List all cargo-installed binaries
