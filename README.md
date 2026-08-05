@@ -29,15 +29,15 @@ Built for machines where you're willing to trade portability and compile time fo
 | Tool | Why |
 |---|---|
 | `bash` (4+) | The script itself (`#!/usr/bin/env bash`) |
-| [`rustup`](https://rustup.rs/) + `cargo` | Core build tooling. A **nightly toolchain** is effectively required — the script uses `-Z build-std`, `-Z unstable-options`, and `-Zmir-opt-level`, gated via `RUSTC_BOOTSTRAP=1` (so a stable `rustc` binary is coerced into accepting nightly-only flags) |
-| `rust-src` component | Required for `-Z build-std=std,panic_abort` (`rustup component add rust-src`) |
-| `x86_64-unknown-linux-gnu` target | Explicit `--target` is passed on every build (`rustup target add x86_64-unknown-linux-gnu`) |
+| `rustc` + `cargo` | Core build tooling. A **stable** toolchain is sufficient — the script uses `-Z build-std`, `-Z unstable-options`, and `-Zmir-opt-level`, and gates them via `RUSTC_BOOTSTRAP=1`, which coerces a stable `rustc` into accepting nightly-only flags without needing a nightly toolchain or `rustup`. Install via your distro's package manager (e.g. `sudo pacman -S rust`) |
+| `rust-src` | Required for `-Z build-std=std,panic_abort`. On Arch: `sudo pacman -S rust-src` |
+| `x86_64-unknown-linux-gnu` target | Explicit `--target` is passed on every build. On Arch this is bundled with the `rust` package and available out of the box |
 | `clang` / `clang++` | Used as `CC`/`CXX` for the `crosslto` profile |
 | `llvm-ar`, `llvm-ranlib` | Used as `AR`/`RANLIB` for the `crosslto` profile |
 | [`mold`](https://github.com/rui314/mold) | Linker, invoked via `-fuse-ld=mold` in `LDFLAGS` |
 | `objdump` (binutils) | Disassembles built binaries to count SIMD/BMI2 instructions when probing profiles |
 | `curl` | Fetches latest crate versions from crates.io in `krabby update` |
-| Standard POSIX/GNU utilities | `grep`, `mktemp`, `printf`, `sort`, `cp`, `mv`, `rm` — present on virtually any Linux distro |
+| Standard POSIX/GNU utilities | `grep`, `coreutils` — present on virtually any Linux distro |
 
 ### Optional
 
@@ -48,19 +48,17 @@ Built for machines where you're willing to trade portability and compile time fo
 ### Installation
 
 ```bash
-# Install nightly-capable toolchain pieces
-rustup component add rust-src
-rustup target add x86_64-unknown-linux-gnu
-
-# Install build dependencies (Arch example)
-sudo pacman -S clang llvm mold binutils curl
+# Install Rust toolchain + build dependencies (Arch)
+sudo pacman -S rust rust-src clang llvm mold binutils curl
 
 # Install the script
 curl -o ~/.local/bin/krabby https://raw.githubusercontent.com/elseawhy/krabby/refs/heads/main/krabby
 chmod +x ~/.local/bin/krabby
 ```
 
-> On Debian/Ubuntu: `sudo apt install clang llvm mold binutils curl`
+> On Debian/Ubuntu: `sudo apt install rustc cargo rust-src clang llvm-dev mold binutils curl`
+
+> **No `rustup` needed.** `RUSTC_BOOTSTRAP=1` coerces the stable system `rustc` into accepting nightly-gated flags (`-Z build-std`, `-Zmir-opt-level`, etc.). A stable toolchain from your distro's package manager is all that's required.
 
 ## Usage
 
@@ -122,7 +120,7 @@ Per-project overrides: drop a `.v3compile` or `.compile-option` file (containing
 ## ⚠️ Caveats
 
 - **Not portable**: binaries built with `-march=native` will only run correctly on the same (or a very similar) CPU. Don't ship these artifacts elsewhere.
-- **Nightly-only flags via `RUSTC_BOOTSTRAP=1`**: this bypasses the stable/nightly gate on a stable toolchain. This is inherently fragile across `rustc` versions — expect occasional breakage when Rust changes internals of `-Z build-std` or other unstable flags.
+- **Nightly-gated flags via `RUSTC_BOOTSTRAP=1`**: this bypasses the stable/nightly gate, so a plain stable `rustc` (from `pacman`, `apt`, etc.) is sufficient — no `rustup` or nightly toolchain needed. That said, it is inherently fragile across `rustc` versions — expect occasional breakage when Rust changes internals of `-Z build-std` or other unstable flags.
 - **`sudo-rs` upgrade path** modifies binary ownership/permissions (`chown root:root`, `chmod 4755`) — review `_handle_sudo_rs` before relying on it in an unattended context.
 - Deleting `~/.cache/v3compile/profiles` (or the per-project `.v3compile`) forces re-probing on the next build.
 
