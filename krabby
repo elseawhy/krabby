@@ -98,12 +98,13 @@ _krabby_get_count() {
 }
 
 _krabby_compile() {
-    local cargo_cmd="$1" cargo_arg="$2" bin_target="$3" bin_name="${3%@*}" cache_dir="${XDG_CACHE_HOME:-$HOME/.cache}/v3compile" work_dir=$(mktemp -d) cached_profile=""
-    [[ "$cargo_cmd" == "install" ]] && mkdir -p "$work_dir/stage"
+    local cargo_cmd="$1" cargo_arg="$2" bin_target="$3" bin_name="${3%@*}" work_dir=$(mktemp -d) cached_profile=""
     trap 'rm -rf "$work_dir" 2>/dev/null; trap "exit 130" INT TERM' RETURN
     trap 'rm -rf "$work_dir" 2>/dev/null; exit 130' INT TERM
 
     if [[ "$cargo_cmd" == "install" ]]; then
+    	local cache_dir="${XDG_CACHE_HOME:-$HOME/.cache}/v3compile"
+        mkdir -p "$work_dir/stage"
         echo "Starting Krabby build for: $bin_name (Mode: $cargo_cmd)"
         [[ -f "$cache_dir/$bin_name" ]] && read -r cached_profile < "$cache_dir/$bin_name" && [[ -n "$cached_profile" ]] && echo "Found global cache: [$cached_profile]"
     else
@@ -195,9 +196,11 @@ SUBCOMMANDS:
         update|upgrade) _krabby_update ;;
         list) echo "📦 Installed Cargo Binaries:"; cargo install --list ;;
     	install) shift
-        		 [[ -z "${1:-}" ]] && { echo "Error: 'krabby install' requires a crate name."; exit 1; }
+        		 [[ -z "${1:-}" ]] && { echo "Error: 'krabby install' requires at least one crate name."; exit 1; }
         		 local old_crates_list="$(_cargo_list)"
-        		 _krabby_compile install --force "$1" || { echo "Install failed!"; exit 1; }
+        		 for _bin in "$@"; do
+        		     _krabby_compile install --force "$_bin" || { echo "Install failed for: $_bin"; exit 1; }
+        		 done
         		 _krabby_sync "$old_crates_list" ;;
         uninstall) shift; local old_crates_list="$(_cargo_list)"; cargo uninstall "$@"; _krabby_sync "$old_crates_list" ;;
         *) _krabby_compile build "--release" || { echo "Build failed!"; exit 1; } ;;
