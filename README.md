@@ -13,7 +13,7 @@ Built for machines where you're willing to trade portability and compile time fo
   - `crosslto` — cross-language LTO with clang/llvm-ar/llvm-ranlib as the C/C++ toolchain, useful when a crate has C/C++ FFI dependencies that benefit from being LTO'd together with the Rust code.
   - `rust` — pure Rust, no C/C++ toolchain involved.
 
-  - For `install`, both profiles are compiled and the resulting binaries disassembled to count advanced x86 instructions (BMI2/AVX2 gather/scatter/permute ops) as a proxy for whether cross-LTO actually changed codegen. 
+  - For `install`, both profiles are compiled and the resulting binaries disassembled to count advanced instructions as a proxy for whether cross-LTO actually changed codegen (e.g., BMI2/AVX2 ops on x86_64). On non-x86_64 hosts, the script is designed to support any architecture by auto-detecting the host target, but the current instruction-counting heuristic is x86_64-specific (it will conservatively fall back to the `rust` profile). Contributors on ARM and other hardware are welcome to help expand these heuristics!
   - For `build`, instead of a second full compile, the incremental build is re-run with a 3-second timeout — if cargo rebuilds anything, C/C++ deps are involved and `crosslto` wins. If instruction counts are equal (or the incremental probe finishes instantly), `rust` is used. The winner is cached and all future builds skip straight to it.
 - **Per-binary caching**: winning profiles are stored as individual files under `~/.cache/v3compile/<bin_name>` for `install` (e.g. `~/.cache/v3compile/ripgrep` contains just `rust` or `crosslto`), or in a local `.v3compile` file for project builds — so subsequent builds skip straight to the fast path instead of re-probing.
 - **Crate update checking** (`krabby update`): checks `crates.io` for newer versions of every `cargo install`-ed binary and recompiles anything out of date.
@@ -22,16 +22,16 @@ Built for machines where you're willing to trade portability and compile time fo
 
 ## Requirements
 
-`krabby` is written for an **x86_64 Linux** system and assumes a fairly specific, performance-tuned toolchain. It is *not* portable out of the box — several flags (`-march=native`, the `x86_64-unknown-linux-gnu` target, LLVM tools) are hardcoded.
+`krabby` targets **Linux** systems. The host target triple is now auto-detected via `rustc -vV`, making the core build pipeline portable across architectures (x86_64, AArch64, RISC-V, etc.). The current FFI probe heuristic inspects BMI2/AVX2 instructions and is **x86_64-specific** — on other architectures it always returns 0 and krabby conservatively defaults to the `rust` profile while still applying all other aggressive optimizations (`-march=native`, `-C target-cpu=native`, LLVM tools). **Contributors with ARM or other non-x86_64 hardware are highly encouraged to submit PRs to expand the FFI probing heuristics!**
 
 ### Required
 
 | Tool | Why |
 |---|---|
 | `bash` (4+) | The script itself (`#!/usr/bin/env bash`) |
-| `rustc` + `cargo` | Core build tooling. A **stable** toolchain is sufficient — the script uses `-Z build-std`, `-Z unstable-options`, and `-Zmir-opt-level`, and gates them via `RUSTC_BOOTSTRAP=1`, which coerces a stable `rustc` into accepting nightly-only flags without needing a nightly toolchain or `rustup`. Install via your distro's package manager (e.g. `sudo pacman -S rust`) |
-| `rust-src` | Required for `-Z build-std=std,panic_abort`. On Arch: `sudo pacman -S rust-src` |
-| `x86_64-unknown-linux-gnu` target | Explicit `--target` is passed on every build. On Arch this is bundled with the `rust` package and available out of the box |
+| `rustc` + `cargo` | Core build tooling. A **stable** toolchain is sufficient — the script uses `-Z build-std`, `-Z unstable-options`, and `-Zmir-opt-level`, gated via `RUSTC_BOOTSTRAP=1`. **On Arch Linux** (or any distro shipping the latest stable): `sudo pacman -S rust` (or your package manager's equivalent) is recommended. **On all other distros**: use [rustup](https://rustup.rs) — `apt`/`dnf` often lag months behind upstream and may ship a version too old for some flags. |
+| `rust-src` | Required for `-Z build-std=std,panic_abort`. On Arch: `sudo pacman -S rust-src`. With rustup: `rustup component add rust-src` |
+| Host target triple | Auto-detected at runtime via `rustc -vV` — no manual configuration needed. Bundled with the `rust` package on Arch; available by default with rustup. |
 | `clang` / `clang++` | Used as `CC`/`CXX` for the `crosslto` profile |
 | `llvm-ar`, `llvm-ranlib` | Used as `AR`/`RANLIB` for the `crosslto` profile |
 | [`mold`](https://github.com/rui314/mold) | Linker, invoked via `-fuse-ld=mold` in `LDFLAGS` |
@@ -43,14 +43,14 @@ Built for machines where you're willing to trade portability and compile time fo
 
 ### Optional
 
-- A CPU that actually benefits from `-march=native` (BMI2/AVX2) — the probing logic assumes recent x86_64 hardware; on older CPUs the `crosslto` vs `rust` comparison may just always come back even.
+- A CPU that actually benefits from `-march=native` (e.g., AVX2/BMI2 on x86_64, or NEON/SVE on ARM). The current probing logic assumes recent x86_64 hardware; on older CPUs or other architectures, the `crosslto` vs `rust` comparison may just always come back even or fallback to `rust`.
 - `sudo-rs` installed via `cargo install` if you want the automatic backup/verify/rollback handling in `_handle_sudo_rs` to matter.
 - `$HOME/dotfiles/pkglist-cargo.txt` tracking, if you set `KRABBY_SYNC_ENABLED=1`.
 
 ### Installation
 
 ```bash
-# Install Rust toolchain + build dependencies (Arch)
+# Install Rust toolchain + build dependencies (Arch or other rolling-release distros)
 sudo pacman -S rust rust-src clang llvm mold binutils curl
 
 # Install the script
@@ -58,9 +58,13 @@ curl -o ~/.local/bin/krabby https://raw.githubusercontent.com/elseawhy/krabby/re
 chmod +x ~/.local/bin/krabby
 ```
 
-> On Debian/Ubuntu: `sudo apt install rustc cargo rust-src clang llvm-dev mold binutils curl`
+> **Users on distros without the latest stable Rust** — use [rustup](https://rustup.rs) instead of your distro's Rust package. `apt`/`dnf` often ship outdated stable versions. After installing rustup, add `rust-src` with `rustup component add rust-src`, then install the remaining native dependencies via your package manager:
+> ```bash
+> # Debian/Ubuntu
+> sudo apt install clang llvm-dev mold binutils curl
+> ```
 
-> **No `rustup` needed.** `RUSTC_BOOTSTRAP=1` coerces the stable system `rustc` into accepting nightly-gated flags (`-Z build-std`, `-Zmir-opt-level`, etc.). A stable toolchain from your distro's package manager is all that's required.
+> **`rustup` vs `RUSTC_BOOTSTRAP=1`** — these solve different problems. `rustup` is recommended to ensure you have a *recent* stable `rustc` (distro packages can lag months behind). `RUSTC_BOOTSTRAP=1` is a separate mechanism that coerces any stable `rustc` into accepting nightly-gated flags (`-Z build-std`, `-Zmir-opt-level`, etc.) — no nightly toolchain or `rustup override` is needed for that.
 
 ## Usage
 
@@ -132,7 +136,7 @@ This section documents every flag set by krabby. All flags are applied through e
 
 | Flag | Effect |
 |---|---|
-| `-march=native` | Emits CPU instructions tuned for the exact CPU this machine has — enables AVX2, BMI2, etc. Passed to the linker so that LTO-time code generation uses the same target arch as compilation. |
+| `-march=native` | Emits CPU instructions tuned for the exact CPU this machine has — enables AVX2, BMI2, etc. on x86_64, and equivalent extensions like NEON/SVE on ARM. Passed to the linker so that LTO-time code generation uses the same target arch as compilation. |
 | `-fuse-ld=mold` | Selects [`mold`](https://github.com/rui314/mold) as the linker. mold is significantly faster than `ld` or `lld` and supports all modern ELF features. |
 | `-Wl,-O1` | Tells the linker to do basic optimizations (e.g. merging identical sections). |
 | `-Wl,--sort-common` | Sorts common symbols by alignment to reduce padding in the BSS section. |
@@ -154,7 +158,7 @@ This section documents every flag set by krabby. All flags are applied through e
 
 | Flag | Effect |
 |---|---|
-| `-march=native` | Generate code using all instruction set extensions available on the current CPU (SSE4, AVX2, BMI2, etc.). Resulting binaries are not portable. |
+| `-march=native` | Generate code using all instruction set extensions available on the current CPU (SSE4, AVX2, BMI2, etc. on x86_64). Resulting binaries are not portable. |
 | `-O3` | Maximum compiler optimization level. Enables auto-vectorization, aggressive inlining, loop unrolling, and more. |
 | `-pipe` | Uses pipes between compilation stages instead of temporary files. Speeds up compilation on systems with slow I/O. |
 | `-fno-plt` | Calls shared library functions directly through the GOT instead of going through the PLT stub, saving one indirect branch per cross-DSO call. Also a hardening measure since it reduces the attack surface for PLT-reuse exploits. |
@@ -164,7 +168,7 @@ This section documents every flag set by krabby. All flags are applied through e
 | `-Werror=format-security` | Promotes format-string security warnings (e.g. `printf(user_str)` with no format argument) to hard errors, preventing a class of format-string exploits. |
 | `-fstack-clash-protection` | Inserts probe code to touch each page as the stack grows, preventing "stack clash" attacks where a large allocation silently skips past the guard page into another memory region. |
 | `-fstack-protector-strong` | Adds a stack canary to functions that have local buffers or take the address of a local variable, detecting stack smashing at runtime. `-strong` is the most complete variant short of `-all`. |
-| `-fcf-protection` | Emits Intel CET (Control-flow Enforcement Technology) `ENDBR` instructions and shadow-stack metadata. On supported CPUs/kernels this enforces that indirect calls and returns can only target valid code. |
+| `-fcf-protection` | Emits Intel CET (Control-flow Enforcement Technology) `ENDBR` instructions and shadow-stack metadata. On supported x86_64 CPUs/kernels this enforces that indirect calls and returns can only target valid code. |
 | `-flto=full` | Enables LLVM full LTO for this translation unit — all C object files are emitted as LLVM bitcode, merged, and optimized together at link time. Pairs with the `-plugin-opt=O3` in `LDFLAGS`. |
 
 ---

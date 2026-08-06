@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-readonly KRABBY_SYNC_ENABLED=1
+readonly KRABBY_SYNC_ENABLED=0
 trap 'exit 130' INT TERM
 
 export LDFLAGS="-march=native -fuse-ld=mold -Wl,-O1,--sort-common,--as-needed,-z,relro,-z,now,-z,pack-relative-relocs,-plugin-opt=O3,-plugin-opt=mcpu=native -flto"
