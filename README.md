@@ -68,14 +68,12 @@ chmod +x ~/.local/bin/krabby
 
 ## Usage
 
-```bash
-krabby                    # Build the local project (release, autodetects Cargo.toml)
-krabby install <crate>[@version]  # Install/compile a crate from crates.io with FFI profiling
-krabby uninstall <crate>  # Uninstall a crate
-krabby update             # Check crates.io and upgrade all installed binaries
-krabby list                # List all cargo-installed binaries
-krabby help                # Show usage
-```
+- `krabby [--features <list>]` - Build the local project (release, autodetects Cargo.toml)
+- `krabby install <crate>[@version]` - Install/compile a crate from crates.io with FFI profiling
+- `krabby uninstall <crate>` - Uninstall a crate
+- `krabby update` - Check crates.io and upgrade all installed binaries
+- `krabby list` - List all cargo-installed binaries
+- `krabby help` - Show usage
 
 ### First build of a crate/project
 

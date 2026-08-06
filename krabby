@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-readonly KRABBY_SYNC_ENABLED=0
+readonly KRABBY_SYNC_ENABLED=1
 trap 'exit 130' INT TERM
 
 export LDFLAGS="-march=native -fuse-ld=mold -Wl,-O1,--sort-common,--as-needed,-z,relro,-z,now,-z,pack-relative-relocs,-plugin-opt=O3,-plugin-opt=mcpu=native -flto"
@@ -188,6 +188,7 @@ SUBCOMMANDS:
   install <binary>    Install or compile a crate from crates.io with FFI profiling
   uninstall <binary>  Uninstall crate
   [no args]           Build a local project (auto-detects Cargo.toml in current dir)
+  --features <list>   Build with comma-separated feature flags (e.g. f1,f2,f3)
   update              Upgrade all installed cargo crates
   list                List all installed cargo binaries
   help, -h            Show this help message
@@ -208,7 +209,18 @@ SUBCOMMANDS:
                 		cargo uninstall "$_bin"
             	   done
             	   _krabby_sync "$old_crates_list" ;;
-        *) _krabby_compile build "--release" || { echo "Build failed!"; exit 1; } ;;
+        *) local features_arg=""
+           case "${1:-}" in
+               --features)
+                   [[ -z "${2:-}" ]] && { echo "Error: '--features' requires a comma-separated list of features."; exit 1; }
+                   features_arg="--features $2" ;;
+               --features=*)
+                   [[ "${1#--features=}" == "" ]] && { echo "Error: '--features=' value cannot be empty."; exit 1; }
+                   features_arg="$1" ;;
+               "") ;;
+               *) echo "Error: Unknown argument '$1'. Usage: krabby [--features f1,f2,...]"; exit 1 ;;
+           esac
+           _krabby_compile build "--release${features_arg:+ $features_arg}" || { echo "Build failed!"; exit 1; } ;;
     esac
 }
 
