@@ -1,10 +1,9 @@
 #!/usr/bin/env bash
-readonly KRABBY_SYNC_ENABLED=0
-
+readonly KRABBY_SYNC_ENABLED=1
 trap 'exit 130' INT TERM
 
 export LDFLAGS="-march=native -fuse-ld=mold -Wl,-O1,--sort-common,--as-needed,-z,relro,-z,now,-z,pack-relative-relocs,-plugin-opt=O3,-plugin-opt=mcpu=native -flto"
-readonly CARGO_COMMON_ARGS=(--target x86_64-unknown-linux-gnu -Z build-std=std,panic_abort --locked --quiet)
+readonly CARGO_COMMON_ARGS=(--target "$(rustc -vV | sed -n 's/^host: //p')" -Z build-std=std,panic_abort --locked --quiet)
 readonly COMMON_CFLAGS="-march=native -O3 -pipe -fno-plt -fexceptions -Wp,-D_FORTIFY_SOURCE=3 -Wformat -Werror=format-security -fstack-clash-protection -fstack-protector-strong -fcf-protection -flto=full"
 readonly COMMON_CXXFLAGS="$COMMON_CFLAGS -D_GLIBCXX_ASSERTIONS"
 readonly COMMON_RUSTFLAGS="-C target-cpu=native -C opt-level=3 -Zmir-opt-level=4 -C codegen-units=1 -Z unstable-options -C panic=immediate-abort${LDFLAGS:+ -Clink-arg=${LDFLAGS// / -Clink-arg=}}"
@@ -202,7 +201,13 @@ SUBCOMMANDS:
         		     _krabby_compile install --force "$_bin" || { echo "Install failed for: $_bin"; exit 1; }
         		 done
         		 _krabby_sync "$old_crates_list" ;;
-        uninstall) shift; local old_crates_list="$(_cargo_list)"; cargo uninstall "$@"; _krabby_sync "$old_crates_list" ;;
+        uninstall) shift
+            	   local old_crates_list="$(_cargo_list)"
+            	   for _bin in "$@"; do
+                		[[ "$_bin" == "sudo-rs" ]] && { echo "Warning: skipping sudo-rs — refusing to uninstall it via krabby. Remove it manually if you're certain."; continue; }
+                		cargo uninstall "$_bin"
+            	   done
+            	   _krabby_sync "$old_crates_list" ;;
         *) _krabby_compile build "--release" || { echo "Build failed!"; exit 1; } ;;
     esac
 }
