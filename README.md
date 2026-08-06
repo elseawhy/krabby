@@ -9,16 +9,16 @@ Built for machines where you're willing to trade portability and compile time fo
 `krabby` is a single Bash script (`_krabby_main`) that replaces day-to-day `cargo build` / `cargo install` / `cargo update` usage with:
 
 - **Native everything**: `-march=native`, `-C target-cpu=native`, full LTO, `mold` as the linker, and hardening flags (`FORTIFY_SOURCE=3`, stack protector, etc.) baked into every build.
-- **Automatic profile selection** (`_krabby_compile`): for each binary it tests two build profiles —
+- **Automatic profile selection** (`_krabby_compile`): on a cache miss, probes two build profiles per binary —
   - `crosslto` — cross-language LTO with clang/llvm-ar/llvm-ranlib as the C/C++ toolchain, useful when a crate has C/C++ FFI dependencies that benefit from being LTO'd together with the Rust code.
   - `rust` — pure Rust, no C/C++ toolchain involved.
-  
-  It disassembles the resulting binaries and counts advanced x86 instructions (BMI2/AVX2 gather/scatter/permute ops) as a proxy for whether `-march=native` + cross-LTO actually changed codegen. Whichever profile "wins" gets cached.
+
+  - For `install`, both profiles are compiled and the resulting binaries disassembled to count advanced x86 instructions (BMI2/AVX2 gather/scatter/permute ops) as a proxy for whether cross-LTO actually changed codegen. 
+  - For `build`, instead of a second full compile, the incremental build is re-run with a 3-second timeout — if cargo rebuilds anything, C/C++ deps are involved and `crosslto` wins. If instruction counts are equal (or the incremental probe finishes instantly), `rust` is used. The winner is cached and all future builds skip straight to it.
 - **Per-binary caching**: winning profiles are stored as individual files under `~/.cache/v3compile/<bin_name>` for `install` (e.g. `~/.cache/v3compile/ripgrep` contains just `rust` or `crosslto`), or in a local `.v3compile` file for project builds — so subsequent builds skip straight to the fast path instead of re-probing.
 - **Crate update checking** (`krabby update`): checks `crates.io` for newer versions of every `cargo install`-ed binary and recompiles anything out of date.
 - **Special-cased `sudo-rs` upgrades**: backs up the existing `sudo` binary, verifies the new one actually works before committing, and restores the backup automatically if compilation or verification fails.
 - **Optional dotfile sync** (`KRABBY_SYNC_ENABLED`): can track the diff of installed cargo binaries into a pkglist file, similar to how Arch users track `pacman` package lists.
-- **Ultra-lean execution**: Heavily optimized to use pure Bash built-ins (associative arrays, string manipulation) instead of spawning external utilities where possible. Includes safe, instant state cleanup on `Ctrl+C`.
 
 ## Requirements
 
@@ -110,14 +110,6 @@ Final binary built via fast-path [rust].
 | `XDG_CACHE_HOME` | `~/.cache` | Where the per-binary profile cache (`v3compile/<bin_name>`) is stored |
 
 Per-project overrides: drop a `.v3compile` file (containing just `rust` or `crosslto`) in a project's root to skip probing for that project permanently.
-
-## How profile selection works
-
-1. **Cache check** — looks up a per-binary (install) or per-project (local build) cached profile. If found, skips straight to compiling with it.
-2. **Probe: `crosslto`** — compiles with clang/llvm-ar/llvm-ranlib and cross-language LTO enabled.
-3. **Probe: `noc`** (canary) — for `install`, compiles a second time with pure Rust flags and no LTO cross-toolchain, then compares instruction counts between the two binaries.
-   - For local project builds, instead of a second full compile, it re-runs the incremental build with a 3-second timeout to see if the FFI-flagged cache invalidated (an indirect signal that C/C++ dependencies are actually involved).
-4. **Decision** — if the instruction counts differ (or the incremental probe times out / rebuilds), `crosslto` wins; otherwise `rust` (pure Rust, no crosslto) is used, and the profile is cached for next time.
 
 ## ⚠️ Caveats
 
