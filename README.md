@@ -8,17 +8,17 @@ Built for machines where you're willing to trade portability and compile time fo
 
 `krabby` is a single Bash script (`_krabby_main`) that replaces day-to-day `cargo build` / `cargo install` / `cargo update` usage with:
 
-- **Native everything**: `-march=native`, `-C target-cpu=native`, full LTO, `mold` as the linker, and hardening flags (`FORTIFY_SOURCE=3`, stack protector, CFI, etc.) baked into every build.
+- **Native everything**: `-march=native`, `-C target-cpu=native`, full LTO, `mold` as the linker, and hardening flags (`FORTIFY_SOURCE=3`, stack protector, etc.) baked into every build.
 - **Automatic profile selection** (`_krabby_compile`): for each binary it tests two build profiles —
   - `crosslto` — cross-language LTO with clang/llvm-ar/llvm-ranlib as the C/C++ toolchain, useful when a crate has C/C++ FFI dependencies that benefit from being LTO'd together with the Rust code.
   - `rust` — pure Rust, no C/C++ toolchain involved.
   
   It disassembles the resulting binaries and counts advanced x86 instructions (BMI2/AVX2 gather/scatter/permute ops) as a proxy for whether `-march=native` + cross-LTO actually changed codegen. Whichever profile "wins" gets cached.
-- **Per-binary caching**: winning profiles are cached in `~/.cache/v3compile/profiles` for `install`, or in a local `.v3compile` file for project builds — so subsequent builds skip straight to the fast path instead of re-probing.
+- **Per-binary caching**: winning profiles are stored as individual files under `~/.cache/v3compile/<bin_name>` for `install` (e.g. `~/.cache/v3compile/ripgrep` contains just `rust` or `crosslto`), or in a local `.v3compile` file for project builds — so subsequent builds skip straight to the fast path instead of re-probing.
 - **Crate update checking** (`krabby update`): checks `crates.io` for newer versions of every `cargo install`-ed binary and recompiles anything out of date.
 - **Special-cased `sudo-rs` upgrades**: backs up the existing `sudo` binary, verifies the new one actually works before committing, and restores the backup automatically if compilation or verification fails.
 - **Optional dotfile sync** (`KRABBY_SYNC_ENABLED`): can track the diff of installed cargo binaries into a pkglist file, similar to how Arch users track `pacman` package lists.
-- **Ultra-lean execution**: Heavily optimized to use pure Bash built-ins (associative arrays, string manipulation, `coproc`) instead of spawning external GNU utilities (`sed`, `comm`, `awk`) to minimize process forks. Includes safe, instant state cleanup on `Ctrl+C`.
+- **Ultra-lean execution**: Heavily optimized to use pure Bash built-ins (associative arrays, string manipulation) instead of spawning external utilities where possible. Includes safe, instant state cleanup on `Ctrl+C`.
 
 ## Requirements
 
@@ -37,7 +37,9 @@ Built for machines where you're willing to trade portability and compile time fo
 | [`mold`](https://github.com/rui314/mold) | Linker, invoked via `-fuse-ld=mold` in `LDFLAGS` |
 | `objdump` (binutils) | Disassembles built binaries to count SIMD/BMI2 instructions when probing profiles |
 | `curl` | Fetches latest crate versions from crates.io in `krabby update` |
-| Standard POSIX/GNU utilities | `grep`, `coreutils` — present on virtually any Linux distro |
+| `awk` | Version/index parsing in `krabby update` and binary path resolution |
+| `xargs` (findutils) | Copying staged binaries in the probe step |
+| coreutils (`cp`, `rm`, `mkdir`, `mktemp`, `tr`, `timeout`) | General file ops, temp dir management, instruction count filtering, and the 3-second incremental probe timeout |
 
 ### Optional
 
@@ -105,9 +107,9 @@ Final binary built via fast-path [rust].
 | Variable | Default | Purpose |
 |---|---|---|
 | `KRABBY_SYNC_ENABLED` | `0` | Set to `1` to enable pkglist-cargo.txt syncing to `~/dotfiles` on install/uninstall |
-| `XDG_CACHE_HOME` | `~/.cache` | Where the profile cache (`v3compile/profiles`) is stored |
+| `XDG_CACHE_HOME` | `~/.cache` | Where the per-binary profile cache (`v3compile/<bin_name>`) is stored |
 
-Per-project overrides: drop a `.v3compile` or `.compile-option` file (containing just `rust` or `crosslto`) in a project's root to skip probing for that project permanently.
+Per-project overrides: drop a `.v3compile` file (containing just `rust` or `crosslto`) in a project's root to skip probing for that project permanently.
 
 ## How profile selection works
 
@@ -122,7 +124,7 @@ Per-project overrides: drop a `.v3compile` or `.compile-option` file (containing
 - **Not portable**: binaries built with `-march=native` will only run correctly on the same (or a very similar) CPU. Don't ship these artifacts elsewhere.
 - **Nightly-gated flags via `RUSTC_BOOTSTRAP=1`**: this bypasses the stable/nightly gate, so a plain stable `rustc` (from `pacman`, `apt`, etc.) is sufficient — no `rustup` or nightly toolchain needed. That said, it is inherently fragile across `rustc` versions — expect occasional breakage when Rust changes internals of `-Z build-std` or other unstable flags.
 - **`sudo-rs` upgrade path** modifies binary ownership/permissions (`chown root:root`, `chmod 4755`) — review `_handle_sudo_rs` before relying on it in an unattended context.
-- Deleting `~/.cache/v3compile/profiles` (or the per-project `.v3compile`) forces re-probing on the next build.
+- Deleting `~/.cache/v3compile/<bin_name>` (or the per-project `.v3compile`) forces re-probing on the next build.
 
 ## License
 

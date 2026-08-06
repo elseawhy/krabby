@@ -7,109 +7,108 @@ export LDFLAGS="-march=native -fuse-ld=mold -Wl,-O1,--sort-common,--as-needed,-z
 readonly CARGO_COMMON_ARGS=(--target x86_64-unknown-linux-gnu -Z build-std=std,panic_abort --locked --quiet)
 readonly COMMON_CFLAGS="-march=native -O3 -pipe -fno-plt -fexceptions -Wp,-D_FORTIFY_SOURCE=3 -Wformat -Werror=format-security -fstack-clash-protection -fstack-protector-strong -fcf-protection -flto=full"
 readonly COMMON_CXXFLAGS="$COMMON_CFLAGS -D_GLIBCXX_ASSERTIONS"
-readonly COMMON_RUSTFLAGS="-C target-cpu=native -C opt-level=3 -Zmir-opt-level=4 -C codegen-units=1 -Z unstable-options -C panic=immediate-abort$(printf ' -Clink-arg=%s' $LDFLAGS)"
+readonly COMMON_RUSTFLAGS="-C target-cpu=native -C opt-level=3 -Zmir-opt-level=4 -C codegen-units=1 -Z unstable-options -C panic=immediate-abort${LDFLAGS:+ -Clink-arg=${LDFLAGS// / -Clink-arg=}}"
 
 spinner() {
     local spinstr='-\|/'
     while kill -0 "$1" 2>/dev/null; do
-        printf "\r\e[K [%c] %b" "$spinstr" "$2"
+        echo -en "\r\e[K [${spinstr:0:1}] $2"
         spinstr="${spinstr:1}${spinstr:0:1}"; sleep 0.1
     done
-    printf "\r\e[K"; wait "$1" 2>/dev/null
+    echo -en "\r\e[K"; wait "$1" 2>/dev/null
 }
 
 _cargo_list() {
-    local crate_name version _
-    while read -r crate_name version _; do [[ $version == v*: ]] && echo "$crate_name"; done < <(cargo install --list 2>/dev/null)
+    cargo install --list 2>/dev/null | awk '$2 ~ /^v.*:/ {print $1}'
 }
 
 _krabby_sync() {
     (( KRABBY_SYNC_ENABLED )) || return 0
-    local pkglist_file="$HOME/dotfiles/pkglist-cargo.txt" new_crates_list="$(_cargo_list)" pkg_name
+    local pkglist_file="$HOME/dotfiles/pkglist-cargo.txt" new_crates_list="$(_cargo_list)"
     [[ "$1" == "$new_crates_list" ]] && return 0
     mkdir -p "${pkglist_file%/*}"
-    if [[ -f "$pkglist_file" ]]; then
-        local -A old_crates_map; while read -r pkg_name; do [[ -n "$pkg_name" ]] && old_crates_map["$pkg_name"]=1; done < "$pkglist_file"
-        while read -r pkg_name; do [[ -n "$pkg_name" ]] && { [[ -z "${old_crates_map[$pkg_name]}" ]] && echo "+ $pkg_name"; unset "old_crates_map[$pkg_name]"; }; done <<< "$new_crates_list"
-        for pkg_name in "${!old_crates_map[@]}"; do echo "- $pkg_name"; done
-    fi
-    printf "%s\n" "$new_crates_list" > "$pkglist_file"
+    echo "$new_crates_list" > "$pkglist_file"
 }
 
 _krabby_update() {
-    local upgraded_crates=() crate_name old_version new_version fetch_fd
-    coproc fetch_updates {
-        while read -r crate_name crate_version _; do
+    local upgraded_crates=() tmpfile=$(mktemp)
+    trap 'rm -f "$tmpfile"' RETURN
+
+    {   while read -r crate_name crate_version _; do
             [[ $crate_version == v*: ]] || continue
             crate_version="${crate_version#v}"; crate_version="${crate_version%:}"
-            [[ $(curl -sA "krabby" "https://crates.io/api/v1/crates/$crate_name") =~ \"max_version\":\"([^\"]+)\" ]] && [[ "$crate_version" != "${BASH_REMATCH[1]}" ]] && echo "$crate_name $crate_version ${BASH_REMATCH[1]}"
-            sleep 0.1
+            local prefix
+            case ${#crate_name} in
+                1) prefix="1/$crate_name" ;;
+                2) prefix="2/$crate_name" ;;
+                3) prefix="3/${crate_name:0:1}/$crate_name" ;;
+                *) prefix="${crate_name:0:2}/${crate_name:2:2}/$crate_name" ;;
+            esac
+            local latest
+            latest=$(curl -sf "https://index.crates.io/$prefix" | grep -oP '"vers":"\K[^"]+' | tail -1)
+            [[ -n "$latest" && "$crate_version" != "$latest" ]] && echo "$crate_name $crate_version $latest"
         done < <(cargo install --list 2>/dev/null)
-    }
-    exec {fetch_fd}<&"${fetch_updates[0]}"; spinner $fetch_updates_PID "Checking crates.io..."
+    } > "$tmpfile" &
+    spinner "$!" "Checking crates.io..."
 
-    while read -u "$fetch_fd" -r crate_name old_version new_version; do
-        [[ -n "$crate_name" ]] || continue
-        upgraded_crates+=("$crate_name: $old_version -> $new_version")
-        [[ "$crate_name" == "sudo-rs" ]] && { _handle_sudo_rs "$old_version" "$new_version"; continue; }
+    while read -r crate_name old_version new_version; do
+        if [[ "$crate_name" == "sudo-rs" ]]; then
+            _handle_sudo_rs "$old_version" "$new_version" && upgraded_crates+=("$crate_name: $old_version -> $new_version")
+            continue
+        fi
         echo "Upgrading $crate_name ($old_version -> $new_version)..."
-        _krabby_compile install --force "$crate_name" || echo "Failed to compile $crate_name"
-    done
-    exec {fetch_fd}<&-
-    (( ${#upgraded_crates[@]} )) && { echo "Upgraded binaries:"; printf "  -> %s\n" "${upgraded_crates[@]}"; }
+        if _krabby_compile install --force "$crate_name"; then
+            upgraded_crates+=("$crate_name: $old_version -> $new_version")
+        else
+            echo "Failed to compile $crate_name"
+        fi
+    done < "$tmpfile"
+
+    (( ${#upgraded_crates[@]} )) && { echo "Upgraded binaries:"; printf '  -> %s\n' "${upgraded_crates[@]}"; }
 }
 
 _handle_sudo_rs() {
-    local cargo_bin_dir="$HOME/.cargo/bin" sudo_backup="$cargo_bin_dir/sudo_backup_v$1"
+    local cargo_bin_dir="$HOME/.cargo/bin" backup_dir="${XDG_STATE_HOME:-$HOME/.local/state}/sudo-rs/v$1"
+    local live_sudo="$cargo_bin_dir/sudo"
+
     echo "Upgrading sudo-rs ($1 -> $2)..."
-    cp -a "$cargo_bin_dir/sudo" "$sudo_backup"
-    "$sudo_backup" true 2>/dev/null || { echo "Abort: backup failed for sudo-rs."; return 1; }
+
+    "$live_sudo" mkdir -p "$backup_dir"
+    "$live_sudo" cp -a "$cargo_bin_dir/"{sudo,visudo,su} "$backup_dir/" \
+        || { echo "Abort: could not backup sudo-rs binaries."; return 1; }
+
+    "$backup_dir/sudo" true 2>/dev/null || { echo "Abort: backup verification failed."; return 1; }
+
     if _krabby_compile install --force sudo-rs; then
-        "$sudo_backup" chown root:root "$cargo_bin_dir/"{sudo,visudo,su}
-        "$sudo_backup" chmod 4755 "$cargo_bin_dir/"{sudo,su}; "$sudo_backup" chmod 755 "$cargo_bin_dir/visudo"
-        echo "Fallback retained at: $sudo_backup"
+        "$backup_dir/sudo" chown root:root "$cargo_bin_dir/"{sudo,visudo,su}
+        "$backup_dir/sudo" chmod 4755 "$cargo_bin_dir/"{sudo,su}
+        "$backup_dir/sudo" chmod 755 "$cargo_bin_dir/visudo"
+        echo "Fallback retained at: $backup_dir"
     else
-        echo "Compilation failed. Restoring backup."; mv "$sudo_backup" "$cargo_bin_dir/sudo"; return 1
+        echo "Compilation failed. Restoring backup."
+        "$backup_dir/sudo" cp -a "$backup_dir/"{sudo,visudo,su} "$cargo_bin_dir/"
+        return 1
     fi
 }
 
 _krabby_get_count() {
-    local instruction_count=0 binary_file
-    while IFS= read -r binary_file; do
-        [[ -f "$binary_file" ]] && (( instruction_count += $(objdump -d "$binary_file" 2>/dev/null | grep -E -ic '\b(bzhi|mulx|pdep|pext|rorx|sarx|shlx|shrx|vgather[a-z0-9]*|vpbroadcast[a-z0-9]*|vpermd|vpermq|vperm2i128)\b') ))
-    done <<< "$1"
-    echo "$instruction_count"
-}
-
-_krabby_snag_artifacts() {
-    if [[ "$1" == "install" ]]; then
-        local is_matching_crate=0 list_line
-        while IFS= read -r list_line; do
-            [[ $list_line == "$2 v"*: ]] && { is_matching_crate=1; continue; }
-            [[ $list_line != " "* ]] && is_matching_crate=0
-            (( is_matching_crate )) && [[ -f "$HOME/.cargo/bin/${list_line// /}" ]] && echo "$HOME/.cargo/bin/${list_line// /}"
-        done < <(cargo install --list 2>/dev/null)
-    else
-        local artifact_file; for artifact_file in "$3"/*; do [[ -f "$artifact_file" ]] && echo "$artifact_file"; done 2>/dev/null
-    fi
+    local instruction_count=0
+    [[ -n "$1" ]] && instruction_count=$(echo -n "$1" | tr '\n' '\0' | xargs -0 -r objdump -d 2>/dev/null | grep -E -ic '\b(bzhi|mulx|pdep|pext|rorx|sarx|shlx|shrx|vgather[a-z0-9]*|vpbroadcast[a-z0-9]*|vpermd|vpermq|vperm2i128)\b')
+    echo "${instruction_count:-0}"
 }
 
 _krabby_compile() {
-    local cargo_cmd="$1" cargo_arg="$2" bin_target="$3" bin_name="${3%@*}" cache_file="${XDG_CACHE_HOME:-$HOME/.cache}/v3compile/profiles"
-    local cached_profile="" config_file cache_entry bin_path_crosslto count_crosslto count_noc winning_profile="rust" work_dir
-    
-    work_dir=$(mktemp -d)
-    mkdir -p "$work_dir/"{stage,backup}
+    local cargo_cmd="$1" cargo_arg="$2" bin_target="$3" bin_name="${3%@*}" cache_dir="${XDG_CACHE_HOME:-$HOME/.cache}/v3compile" work_dir=$(mktemp -d) cached_profile=""
+    [[ "$cargo_cmd" == "install" ]] && mkdir -p "$work_dir/stage"
     trap 'rm -rf "$work_dir" 2>/dev/null; trap "exit 130" INT TERM' RETURN
     trap 'rm -rf "$work_dir" 2>/dev/null; exit 130' INT TERM
-    cargo_arg="${cargo_arg//\$stage_dir/$work_dir/stage}"
 
     if [[ "$cargo_cmd" == "install" ]]; then
         echo "Starting Krabby build for: $bin_name (Mode: $cargo_cmd)"
-        [[ -f "$cache_file" ]] && while IFS='=' read -ra cache_entry; do [[ "${cache_entry[0]// /}" == "$bin_name" ]] && cached_profile="${cache_entry[1]// /}" && echo "Found global cache: [$cached_profile]" && break; done < "$cache_file"
+        [[ -f "$cache_dir/$bin_name" ]] && read -r cached_profile < "$cache_dir/$bin_name" && [[ -n "$cached_profile" ]] && echo "Found global cache: [$cached_profile]"
     else
         echo "Starting Krabby build for local project (Mode: $cargo_cmd)"
-        for config_file in .v3compile .compile-option; do [[ -f "$config_file" ]] && read -r cached_profile < "$config_file" && cached_profile="${cached_profile//[[:space:]]/}" && echo "Found project override: [$cached_profile]" && break; done
+        [[ -f ".v3compile" ]] && read -r cached_profile < ".v3compile" && [[ -n "$cached_profile" ]] && echo "Found project override: [$cached_profile]"
     fi
 
     _compile_profile() {
@@ -124,58 +123,56 @@ _krabby_compile() {
 
     if [[ -n "$cached_profile" ]]; then
         echo "Skipping FFI probes. Fast-tracking..."
-    	if [[ "$cached_profile" == "crosslto" ]]; then
-        	_compile_profile "crosslto" "$COMMON_CFLAGS" "$COMMON_CXXFLAGS" "$COMMON_RUSTFLAGS -C linker=clang -C linker-plugin-lto"
-    	else
-        	_compile_profile "rust" "" "" "$COMMON_RUSTFLAGS"
-    	fi
+        if [[ "$cached_profile" == "crosslto" ]]; then
+            _compile_profile "crosslto" "$COMMON_CFLAGS" "$COMMON_CXXFLAGS" "$COMMON_RUSTFLAGS -C linker=clang -C linker-plugin-lto" || return 1
+        else
+            _compile_profile "rust" "" "" "$COMMON_RUSTFLAGS" || return 1
+        fi
         echo "Final binary built via fast-path [$cached_profile]."
         return 0
     fi
 
     echo "No cache found. Initiating FFI probes..."
-    _compile_profile "crosslto" "$COMMON_CFLAGS" "$COMMON_CXXFLAGS" "$COMMON_RUSTFLAGS -C linker=clang -C linker-plugin-lto"
-    
-    bin_path_crosslto=$(_krabby_snag_artifacts "$cargo_cmd" "$bin_name" "$work_dir/stage")
-    while IFS= read -r bin_file; do [[ -f "$bin_file" ]] && cp -a "$bin_file" "$work_dir/backup/"; done <<< "$bin_path_crosslto"
+    _compile_profile "crosslto" "$COMMON_CFLAGS" "$COMMON_CXXFLAGS" "$COMMON_RUSTFLAGS -C linker=clang -C linker-plugin-lto" || return 1
 
     if [[ "$cargo_cmd" == "install" ]]; then
-        count_crosslto=$(_krabby_get_count "$bin_path_crosslto")
+        local bin_path=$(cargo install --list 2>/dev/null | awk -v c="$bin_name" -v home="$HOME" \
+            '$0 ~ "^"c" v" {m=1; next} /^[^[:space:]]/ {m=0} m {f=home "/.cargo/bin/" $1; if (system("test -f " f) == 0) print f}')
+        local count_crosslto=$(_krabby_get_count "$bin_path")
+        xargs -d'\n' -r cp -a --target-directory="$work_dir/stage/" <<< "$bin_path"
+
         _compile_profile "noc" "" "" "$COMMON_RUSTFLAGS -C linker=clang -C linker-plugin-lto"
-        count_noc=$(_krabby_get_count "$(_krabby_snag_artifacts "$cargo_cmd" "$bin_name" "$work_dir/stage")")
+        local count_noc=$(_krabby_get_count "$bin_path")
 
         echo "--- PROBE RESULT ---"
-        printf "%-14s : %s\n" "crosslto" "${count_crosslto:-0}"
-        printf "%-14s : %s\n" "noc (canary)" "${count_noc:-0}"
+        echo "crosslto       : ${count_crosslto:-0}"
+        echo "noc (canary)   : ${count_noc:-0}"
         echo "--------------------"
 
-        [[ "${count_crosslto:-0}" != "${count_noc:-0}" ]] && winning_profile="crosslto"
+        if [[ "${count_crosslto:-0}" != "${count_noc:-0}" ]]; then
+            local winning_profile="crosslto"
+            echo "C/C++ dependencies detected. Restoring staged crosslto binary..."
+            cp -a "$work_dir/stage/"* "$HOME/.cargo/bin/"
+        else
+            local winning_profile="rust"
+            echo "No C/C++ FFI benefits detected. Compiling pure rust profile..."
+            _compile_profile "rust" "" "" "$COMMON_RUSTFLAGS" || return 1
+        fi
+
+        mkdir -p "$cache_dir"
+        echo "$winning_profile" > "$cache_dir/$bin_name"
     else
         echo "Testing incremental cache with noc profile (3s timeout)..."
         _compile_profile "noc" "" "" "$COMMON_RUSTFLAGS -C linker=clang -C linker-plugin-lto" "3s"
         case $? in
-            124) echo "Cargo is rebuilding FFI (exceeded 3s)! crosslto takes the crown."; winning_profile="crosslto" ;;
-            0) echo "Incremental build finished instantly! No FFI flags mattered." ;;
-            *) echo "Probe failed unexpectedly. Falling back to pure rust." ;;
+            124) echo "Cargo is rebuilding FFI (exceeded 3s)! crosslto takes the crown." 
+            	 local winning_profile="crosslto" ;;
+              0) echo "Incremental build finished instantly! No FFI flags mattered."
+                 _compile_profile "rust" "" "" "$COMMON_RUSTFLAGS" || return 1
+                 local winning_profile="rust" ;;
+              *) echo "Probe failed unexpectedly. Aborting."; return 1 ;;
         esac
-    fi
-
-    if [[ "$winning_profile" == "crosslto" ]]; then
-        echo "C/C++ dependencies detected. Restoring staged crosslto binary..."
-        while IFS= read -r bin_file; do [[ -f "$work_dir/backup/${bin_file##*/}" ]] && cp -a "$work_dir/backup/${bin_file##*/}" "$bin_file"; done <<< "$bin_path_crosslto"
-    else
-        echo "No C/C++ FFI benefits detected. Compiling pure rust profile..."
-        _compile_profile "rust" "" "" "$COMMON_RUSTFLAGS"
-    fi
-
-    mkdir -p "${cache_file%/*}"
-    if [[ "$cargo_cmd" == "install" ]]; then
-        local out="" cache_line cache_key
-        [[ -f "$cache_file" ]] && while IFS= read -r cache_line; do cache_key="${cache_line%%=*}"; [[ -n "$cache_line" && "${cache_key// /}" != "$bin_name" ]] && out+="$cache_line"$'\n'; done < "$cache_file"
-        printf "%s%s=%s\n" "$out" "$bin_name" "$winning_profile" > "$cache_file"
-    else
-        [[ ! -f ".v3compile" && ! -f ".compile-option" ]] && echo "$winning_profile" > .v3compile
-        mkdir -p "$HOME/.cargo/bin"; cp -a "$work_dir/stage/"* "$HOME/.cargo/bin/" 2>/dev/null || true
+        echo "$winning_profile" > .v3compile
     fi
 }
 
@@ -200,10 +197,10 @@ SUBCOMMANDS:
     	install) shift
         		 [[ -z "${1:-}" ]] && { echo "Error: 'krabby install' requires a crate name."; exit 1; }
         		 local old_crates_list="$(_cargo_list)"
-        		 _krabby_compile install --force "$1"
+        		 _krabby_compile install --force "$1" || { echo "Install failed!"; exit 1; }
         		 _krabby_sync "$old_crates_list" ;;
         uninstall) shift; local old_crates_list="$(_cargo_list)"; cargo uninstall "$@"; _krabby_sync "$old_crates_list" ;;
-        *) _krabby_compile build "--release -Z unstable-options --artifact-dir \$stage_dir" ;;
+        *) _krabby_compile build "--release" || { echo "Build failed!"; exit 1; } ;;
     esac
 }
 
