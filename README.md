@@ -118,6 +118,109 @@ Per-project overrides: drop a `.v3compile` file (containing just `rust` or `cros
 - **`sudo-rs` upgrade path** modifies binary ownership/permissions (`chown root:root`, `chmod 4755`) — review `_handle_sudo_rs` before relying on it in an unattended context.
 - Deleting `~/.cache/v3compile/<bin_name>` (or the per-project `.v3compile`) forces re-probing on the next build.
 
+## Build Flags Reference
+
+This section documents every flag set by krabby. All flags are applied through environment variables passed to `cargo` during compilation.
+
+---
+
+### `LDFLAGS` — Linker flags (passed to the C/C++ linker)
+
+```
+-march=native -fuse-ld=mold -Wl,-O1,--sort-common,--as-needed,-z,relro,-z,now,-z,pack-relative-relocs,-plugin-opt=O3,-plugin-opt=mcpu=native -flto
+```
+
+| Flag | Effect |
+|---|---|
+| `-march=native` | Emits CPU instructions tuned for the exact CPU this machine has — enables AVX2, BMI2, etc. Passed to the linker so that LTO-time code generation uses the same target arch as compilation. |
+| `-fuse-ld=mold` | Selects [`mold`](https://github.com/rui314/mold) as the linker. mold is significantly faster than `ld` or `lld` and supports all modern ELF features. |
+| `-Wl,-O1` | Tells the linker to do basic optimizations (e.g. merging identical sections). |
+| `-Wl,--sort-common` | Sorts common symbols by alignment to reduce padding in the BSS section. |
+| `-Wl,--as-needed` | Only links libraries that are actually referenced. Eliminates unused shared library dependencies from the final binary. |
+| `-Wl,-z,relro` | Makes certain ELF segments (GOT, `.init_array`, etc.) read-only after the dynamic linker is done with them — part of the RELRO hardening technique. |
+| `-Wl,-z,now` | Forces all PLT relocations to be resolved at startup ("full RELRO"). Combined with `-z,relro`, this makes the GOT fully read-only at runtime, thwarting GOT overwrite attacks. |
+| `-Wl,-z,pack-relative-relocs` | Uses a compact encoding for relative relocations (RELR), reducing binary size and startup time on modern kernels/glibc. |
+| `-Wl,-plugin-opt=O3` | Instructs the LTO plugin (LLVM) to optimize at O3 during the link step. This is LTO-time code-generation optimization, separate from per-TU compile-time `-O3`. |
+| `-Wl,-plugin-opt=mcpu=native` | Tells LLVM's LTO backend to target the native CPU when generating machine code at link time — mirrors `-march=native` but for the LTO pass. |
+| `-flto` | Enables Link-Time Optimization. Passes IR (LLVM bitcode) between translation units, allowing the linker to inline and optimize across object file boundaries. |
+
+---
+
+### `CFLAGS` — C compiler flags
+
+```
+-march=native -O3 -pipe -fno-plt -fexceptions -Wp,-D_FORTIFY_SOURCE=3 -Wformat -Werror=format-security -fstack-clash-protection -fstack-protector-strong -fcf-protection -flto=full
+```
+
+| Flag | Effect |
+|---|---|
+| `-march=native` | Generate code using all instruction set extensions available on the current CPU (SSE4, AVX2, BMI2, etc.). Resulting binaries are not portable. |
+| `-O3` | Maximum compiler optimization level. Enables auto-vectorization, aggressive inlining, loop unrolling, and more. |
+| `-pipe` | Uses pipes between compilation stages instead of temporary files. Speeds up compilation on systems with slow I/O. |
+| `-fno-plt` | Calls shared library functions directly through the GOT instead of going through the PLT stub, saving one indirect branch per cross-DSO call. Also a hardening measure since it reduces the attack surface for PLT-reuse exploits. |
+| `-fexceptions` | Enables C++ style stack unwinding tables even in C code. Required for correct behavior when C code is called from C++ with exceptions, or to allow DWARF-based profilers/backtraces to unwind through C frames. |
+| `-Wp,-D_FORTIFY_SOURCE=3` | Enables glibc's buffer-overflow detection wrappers (e.g. for `memcpy`, `sprintf`) at level 3 — the most aggressive level, which also checks some dynamic-size buffers that level 2 misses. Requires optimization (`-O1` or higher) to take effect. |
+| `-Wformat` | Warns about mismatches between `printf`/`scanf` format strings and their arguments. |
+| `-Werror=format-security` | Promotes format-string security warnings (e.g. `printf(user_str)` with no format argument) to hard errors, preventing a class of format-string exploits. |
+| `-fstack-clash-protection` | Inserts probe code to touch each page as the stack grows, preventing "stack clash" attacks where a large allocation silently skips past the guard page into another memory region. |
+| `-fstack-protector-strong` | Adds a stack canary to functions that have local buffers or take the address of a local variable, detecting stack smashing at runtime. `-strong` is the most complete variant short of `-all`. |
+| `-fcf-protection` | Emits Intel CET (Control-flow Enforcement Technology) `ENDBR` instructions and shadow-stack metadata. On supported CPUs/kernels this enforces that indirect calls and returns can only target valid code. |
+| `-flto=full` | Enables LLVM full LTO for this translation unit — all C object files are emitted as LLVM bitcode, merged, and optimized together at link time. Pairs with the `-plugin-opt=O3` in `LDFLAGS`. |
+
+---
+
+### `CXXFLAGS` — C++ compiler flags
+
+```
+<all of CFLAGS> -D_GLIBCXX_ASSERTIONS
+```
+
+`CXXFLAGS` inherits every flag from `CFLAGS` (see above) and adds:
+
+| Flag | Effect |
+|---|---|
+| `-D_GLIBCXX_ASSERTIONS` | Enables lightweight bounds-checking assertions in the C++ standard library (libstdc++). For example, `std::vector::operator[]` will abort on out-of-bounds access in debug builds. Has a small runtime cost but catches UB that would otherwise be silent. |
+
+---
+
+### `RUSTFLAGS` — Rust compiler flags
+
+```
+-C target-cpu=native -C opt-level=3 -Zmir-opt-level=4 -C codegen-units=1 -Z unstable-options -C panic=immediate-abort
+```
+
+Plus, when linked through the `crosslto` profile:
+
+```
+-C linker=clang -C linker-plugin-lto
+```
+
+And all `LDFLAGS` are forwarded as `-Clink-arg=<flag>` entries.
+
+| Flag | Effect |
+|---|---|
+| `-C target-cpu=native` | Tells `rustc`/LLVM to emit code targeting all features of the current CPU — the Rust equivalent of `-march=native`. |
+| `-C opt-level=3` | Sets LLVM optimization level to O3 for Rust code. Enables the same aggressive optimizations as `-O3` in C/C++. |
+| `-Zmir-opt-level=4` | Runs rustc's own Mid-level IR (MIR) optimizer at its most aggressive level (0–4) before handing off to LLVM. Performs inlining, copy propagation, and simplification passes that help LLVM do more. Requires `RUSTC_BOOTSTRAP=1` (nightly-gated). |
+| `-C codegen-units=1` | Compiles the entire crate as a single LLVM module instead of splitting it across parallel codegen units. Allows LLVM to optimize and inline across the entire crate at compile time (even without LTO). Slower to compile but produces better code. |
+| `-Z unstable-options` | Opt-in flag required to unlock certain unstable `rustc` options used elsewhere in the flags (e.g. some `-C` and `-Z` combinations). Requires `RUSTC_BOOTSTRAP=1`. |
+| `-C panic=immediate-abort` | Replaces Rust's panicking machinery (stack unwinding, `PanicInfo` formatting, etc.) with a direct `abort()` call. Eliminates the panic runtime, significantly reducing binary size and removing unwinding overhead. |
+| `-C linker=clang` *(crosslto only)* | Uses `clang` as the linker driver instead of `cc`/`gcc`. Required for cross-language LTO because clang knows how to hand LLVM bitcode from both Rust and C/C++ object files to the LTO backend together. |
+| `-C linker-plugin-lto` *(crosslto only)* | Tells `rustc` to emit LLVM bitcode rather than native object files, and to invoke the LLVM LTO plugin at link time. This is what enables cross-language LTO between Rust and C/C++ — both sides must emit bitcode for the linker to merge and optimize them jointly. |
+| `-Clink-arg=<LDFLAGS>` | Each linker flag from `LDFLAGS` is forwarded verbatim to the linker via `rustc`'s `-Clink-arg=` mechanism, since `rustc` drives the linker itself and doesn't read `LDFLAGS` from the environment directly. |
+
+---
+
+### Profile summary
+
+| Profile | CFLAGS/CXXFLAGS set? | Extra RUSTFLAGS | When used |
+|---|---|---|---|
+| `crosslto` | ✅ Full flags | `-C linker=clang -C linker-plugin-lto` | Crate has C/C++ deps that benefit from cross-LTO |
+| `rust` | ❌ Not set | — | Pure-Rust crate, no FFI benefit detected |
+| `noc` *(probe only)* | ❌ Not set | `-C linker=clang -C linker-plugin-lto` | Canary build used during FFI detection probing |
+
+---
+
 ## License
 
 [MIT License](https://github.com/elseawhy/krabby/blob/main/LICENSE)
