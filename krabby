@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
 readonly KRABBY_SYNC_ENABLED=1
-trap 'exit 130' INT TERM
 
 export LDFLAGS="-march=native -fuse-ld=mold -Wl,-O1,--sort-common,--as-needed,-z,relro,-z,now,-z,pack-relative-relocs,-plugin-opt=O3,-plugin-opt=mcpu=native -flto"
 readonly CARGO_COMMON_ARGS=(--target "$(rustc -vV | sed -n 's/^host: //p')" -Z build-std=std,panic_abort --locked --quiet)
@@ -31,7 +30,7 @@ _krabby_sync() {
 
 _krabby_update() {
     local upgraded_crates=() tmpfile=$(mktemp)
-    trap 'rm -f "$tmpfile"' RETURN
+    trap 'rm -f "$tmpfile"' EXIT
 
     {   while read -r crate_name crate_version _; do
             [[ $crate_version == v*: ]] || continue
@@ -98,7 +97,7 @@ _krabby_get_count() {
 
 _krabby_compile() {
     local cargo_cmd="$1" cargo_arg="$2" bin_target="$3" bin_name="${3%@*}" work_dir=$(mktemp -d) cached_profile=""
-    trap 'rm -rf "$work_dir" 2>/dev/null; trap "exit 130" INT TERM' RETURN
+    trap 'rm -rf "$work_dir" 2>/dev/null' RETURN
     trap 'rm -rf "$work_dir" 2>/dev/null; exit 130' INT TERM
 
     if [[ "$cargo_cmd" == "install" ]]; then
@@ -187,8 +186,7 @@ USAGE:
 SUBCOMMANDS:
   install <binary>    Install or compile a crate from crates.io with FFI profiling
   uninstall <binary>  Uninstall crate
-  [no args]           Build a local project (auto-detects Cargo.toml in current dir)
-  --features <list>   Build with comma-separated feature flags (e.g. f1,f2,f3)
+  [args...]           Build a local project passing args to cargo build (auto-detects Cargo.toml)
   update              Upgrade all installed cargo crates
   list                List all installed cargo binaries
   help, -h            Show this help message
@@ -197,10 +195,16 @@ SUBCOMMANDS:
         list) echo "📦 Installed Cargo Binaries:"; cargo install --list ;;
     	install) shift
         		 [[ -z "${1:-}" ]] && { echo "Error: 'krabby install' requires at least one crate name."; exit 1; }
-        		 local old_crates_list="$(_cargo_list)"
-        		 for _bin in "$@"; do
-        		     _krabby_compile install --force "$_bin" || { echo "Install failed for: $_bin"; exit 1; }
-        		 done
+        		 local old_crates_list="$(_cargo_list)" has_flags=0
+        		 for arg in "$@"; do [[ "$arg" == -* ]] && { has_flags=1; break; }; done
+        		 if (( has_flags )); then
+            		 local bin_name="$1"; shift
+            		 _krabby_compile install "--force $*" "$bin_name" || { echo "Install failed for: $bin_name"; exit 1; }
+        		 else
+            		 for _bin in "$@"; do
+            		     _krabby_compile install --force "$_bin" || { echo "Install failed for: $_bin"; exit 1; }
+            		 done
+        		 fi
         		 _krabby_sync "$old_crates_list" ;;
         uninstall) shift
             	   local old_crates_list="$(_cargo_list)"
@@ -209,18 +213,8 @@ SUBCOMMANDS:
                 		cargo uninstall "$_bin"
             	   done
             	   _krabby_sync "$old_crates_list" ;;
-        *) local features_arg=""
-           case "${1:-}" in
-               --features)
-                   [[ -z "${2:-}" ]] && { echo "Error: '--features' requires a comma-separated list of features."; exit 1; }
-                   features_arg="--features $2" ;;
-               --features=*)
-                   [[ "${1#--features=}" == "" ]] && { echo "Error: '--features=' value cannot be empty."; exit 1; }
-                   features_arg="$1" ;;
-               "") ;;
-               *) echo "Error: Unknown argument '$1'. Usage: krabby [--features f1,f2,...]"; exit 1 ;;
-           esac
-           _krabby_compile build "--release${features_arg:+ $features_arg}" || { echo "Build failed!"; exit 1; } ;;
+        *) [[ -f Cargo.toml ]] || { _krabby_main help; exit 1; }
+           _krabby_compile build "--release $*" || { echo "Build failed!"; exit 1; } ;;
     esac
 }
 

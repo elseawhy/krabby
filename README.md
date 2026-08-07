@@ -68,8 +68,8 @@ chmod +x ~/.local/bin/krabby
 
 ## Usage
 
-- `krabby [--features <list>]` - Build the local project (release, autodetects Cargo.toml)
-- `krabby install <crate>[@version]` - Install/compile a crate from crates.io with FFI profiling
+- `krabby [args...]` - Build the local project (auto-detects Cargo.toml). Arguments are passed directly to `cargo build`. Note: `--release` and `--locked` are automatically enabled.
+- `krabby install <crate> [args...]` - Install/compile a crate from crates.io with FFI profiling. You can pass any `cargo install` flags (like `--features`) after the crate name. Note: `--locked` is automatically enabled.
 - `krabby uninstall <crate>` - Uninstall a crate
 - `krabby update` - Check crates.io and upgrade all installed binaries
 - `krabby list` - List all cargo-installed binaries
