@@ -8,7 +8,7 @@ Built for machines where you're willing to trade portability and compile time fo
 
 `krabby` is a single Bash script (`_krabby_main`) that replaces day-to-day `cargo build` / `cargo install` / `cargo update` usage with:
 
-- **Native everything**: `-march=native`, `-C target-cpu=native`, full LTO, `mold` as the linker, and hardening flags (`FORTIFY_SOURCE=3`, stack protector, etc.) baked into every build.
+- **Native everything**: `-march=native`, `-C target-cpu=native`, full LTO, `lld` as the linker, and hardening flags (`FORTIFY_SOURCE=3`, stack protector, etc.) baked into every build.
 - **Automatic profile selection** (`_krabby_compile`): on a cache miss, probes two build profiles per binary —
   - `crosslto` — cross-language LTO with clang/llvm-ar/llvm-ranlib as the C/C++ toolchain, useful when a crate has C/C++ FFI dependencies that benefit from being LTO'd together with the Rust code.
   - `rust` — pure Rust, no C/C++ toolchain involved.
@@ -34,7 +34,7 @@ Built for machines where you're willing to trade portability and compile time fo
 | Host target triple | Auto-detected at runtime via `rustc -vV` — no manual configuration needed. Bundled with the `rust` package on Arch; available by default with rustup. |
 | `clang` / `clang++` | Used as `CC`/`CXX` for the `crosslto` profile |
 | `llvm-ar`, `llvm-ranlib` | Used as `AR`/`RANLIB` for the `crosslto` profile |
-| [`mold`](https://github.com/rui314/mold) | Linker, invoked via `-fuse-ld=mold` in `LDFLAGS` |
+| `lld` | Linker, invoked via `-fuse-ld=lld` in `LDFLAGS` |
 | `objdump` (binutils) | Disassembles built binaries to count SIMD/BMI2 instructions when probing profiles |
 | `curl` | Fetches latest crate versions from crates.io in `krabby update` |
 | `awk` | Version/index parsing in `krabby update` and binary path resolution |
@@ -51,7 +51,7 @@ Built for machines where you're willing to trade portability and compile time fo
 
 ```bash
 # Install Rust toolchain + build dependencies (Arch or other rolling-release distros)
-sudo pacman -S rust rust-src clang llvm mold binutils curl
+sudo pacman -S rust rust-src clang llvm lld binutils curl
 
 # Install the script
 curl -o ~/.local/bin/krabby https://raw.githubusercontent.com/elseawhy/krabby/refs/heads/main/krabby
@@ -61,7 +61,7 @@ chmod +x ~/.local/bin/krabby
 > **Users on distros without the latest stable Rust** — use [rustup](https://rustup.rs) instead of your distro's Rust package. `apt`/`dnf` often ship outdated stable versions. After installing rustup, add `rust-src` with `rustup component add rust-src`, then install the remaining native dependencies via your package manager:
 > ```bash
 > # Debian/Ubuntu
-> sudo apt install clang llvm-dev mold binutils curl
+> sudo apt install clang llvm-dev lld binutils curl
 > ```
 
 > **`rustup` vs `RUSTC_BOOTSTRAP=1`** — these solve different problems. `rustup` is recommended to ensure you have a *recent* stable `rustc` (distro packages can lag months behind). `RUSTC_BOOTSTRAP=1` is a separate mechanism that coerces any stable `rustc` into accepting nightly-gated flags (`-Z build-std`, `-Zmir-opt-level`, etc.) — no nightly toolchain or `rustup override` is needed for that.
@@ -129,13 +129,13 @@ This section documents every flag set by krabby. All flags are applied through e
 ### `LDFLAGS` — Linker flags (passed to the C/C++ linker)
 
 ```
--march=native -fuse-ld=mold -Wl,-O1,--sort-common,--as-needed,-z,relro,-z,now,-z,pack-relative-relocs,-plugin-opt=O3,-plugin-opt=mcpu=native -flto
+-march=native -fuse-ld=lld -Wl,-O1,--sort-common,--as-needed,-z,relro,-z,now,-z,pack-relative-relocs,-plugin-opt=O3,-plugin-opt=mcpu=native -flto
 ```
 
 | Flag | Effect |
 |---|---|
 | `-march=native` | Emits CPU instructions tuned for the exact CPU this machine has — enables AVX2, BMI2, etc. on x86_64, and equivalent extensions like NEON/SVE on ARM. Passed to the linker so that LTO-time code generation uses the same target arch as compilation. |
-| `-fuse-ld=mold` | Selects [`mold`](https://github.com/rui314/mold) as the linker. mold is significantly faster than `ld` or `lld` and supports all modern ELF features. |
+| `-fuse-ld=lld` | Selects `lld` as the linker. lld is the LLVM linker and is generally faster than `ld` while offering excellent compatibility and stability. |
 | `-Wl,-O1` | Tells the linker to do basic optimizations (e.g. merging identical sections). |
 | `-Wl,--sort-common` | Sorts common symbols by alignment to reduce padding in the BSS section. |
 | `-Wl,--as-needed` | Only links libraries that are actually referenced. Eliminates unused shared library dependencies from the final binary. |

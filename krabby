@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 readonly KRABBY_SYNC_ENABLED=1
 
-export LDFLAGS="-march=native -fuse-ld=mold -Wl,-O1,--sort-common,--as-needed,-z,relro,-z,now,-z,pack-relative-relocs,-plugin-opt=O3,-plugin-opt=mcpu=native -flto"
+export LDFLAGS="-march=native -fuse-ld=lld -Wl,-O1,--sort-common,--as-needed,-z,relro,-z,now,-z,pack-relative-relocs,-plugin-opt=O3,-plugin-opt=mcpu=native -flto"
 readonly CARGO_COMMON_ARGS=(--target "$(rustc -vV | sed -n 's/^host: //p')" -Z build-std=std,panic_abort --locked --quiet)
 readonly COMMON_CFLAGS="-march=native -O3 -pipe -fno-plt -fexceptions -Wp,-D_FORTIFY_SOURCE=3 -Wformat -Werror=format-security -fstack-clash-protection -fstack-protector-strong -fcf-protection -flto=full"
 readonly COMMON_CXXFLAGS="$COMMON_CFLAGS -D_GLIBCXX_ASSERTIONS"
@@ -186,6 +186,7 @@ USAGE:
 SUBCOMMANDS:
   install <binary>    Install or compile a crate from crates.io with FFI profiling
   uninstall <binary>  Uninstall crate
+  inject <prof> <cmd> Execute a command with injected profiles (prof: crosslto or rust)
   [args...]           Build a local project passing args to cargo build (auto-detects Cargo.toml)
   update              Upgrade all installed cargo crates
   list                List all installed cargo binaries
@@ -193,6 +194,23 @@ SUBCOMMANDS:
 ' ;;
         update|upgrade) _krabby_update ;;
         list) echo "📦 Installed Cargo Binaries:"; cargo install --list ;;
+        run|env|inject)
+            shift
+            local profile="crosslto"
+            if [[ "${1:-}" == "crosslto" || "${1:-}" == "rust" ]]; then
+                profile="$1"
+                shift
+            fi
+            [[ -z "${1:-}" ]] && { echo "Error: 'krabby inject' requires a command to execute."; exit 1; }
+            local cflags="" cxxflags="" rustflags="$COMMON_RUSTFLAGS"
+            if [[ "$profile" == "crosslto" ]]; then
+                cflags="$COMMON_CFLAGS"
+                cxxflags="$COMMON_CXXFLAGS"
+                rustflags="$COMMON_RUSTFLAGS -C linker=clang -C linker-plugin-lto"
+            fi
+            RUSTC_BOOTSTRAP=1 CC=clang CXX=clang++ AR=llvm-ar RANLIB=llvm-ranlib \
+            CFLAGS="$cflags" CXXFLAGS="$cxxflags" RUSTFLAGS="$rustflags" \
+            exec "$@" ;;
     	install) shift
         		 [[ -z "${1:-}" ]] && { echo "Error: 'krabby install' requires at least one crate name."; exit 1; }
         		 local old_crates_list="$(_cargo_list)" has_flags=0
