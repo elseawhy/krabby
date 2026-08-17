@@ -215,7 +215,7 @@ SUBCOMMANDS:
             
     	install) shift
         		 [[ -z "${1:-}" ]] && { echo "Error: 'krabby install' requires at least one crate name."; exit 1; }
-        		 local old_crates_list="$(_cargo_list)" bins=() flags=() parsing_flags=0 c_args
+        		 local old_crates_list="$(_cargo_list)" bins=() flags=() parsing_flags=0 c_arg
                  
                  for arg in "$@"; do
                      if (( parsing_flags )) || [[ "$arg" == -* ]]; then
