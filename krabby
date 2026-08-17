@@ -97,6 +97,7 @@ _krabby_get_count() {
 
 _krabby_compile() {
     local cargo_cmd="$1" cargo_arg="$2" bin_target="$3" bin_name="${3%@*}" work_dir=$(mktemp -d) cached_profile=""
+    local cache_file_name="${bin_name//\//%}"
     trap 'rm -rf "$work_dir" 2>/dev/null' RETURN
     trap 'rm -rf "$work_dir" 2>/dev/null; exit 130' INT TERM
 
@@ -104,7 +105,7 @@ _krabby_compile() {
     	local cache_dir="${XDG_CACHE_HOME:-$HOME/.cache}/v3compile"
         mkdir -p "$work_dir/stage"
         echo "Starting Krabby build for: $bin_name (Mode: $cargo_cmd)"
-        [[ -f "$cache_dir/$bin_name" ]] && read -r cached_profile < "$cache_dir/$bin_name" && [[ -n "$cached_profile" ]] && echo "Found global cache: [$cached_profile]"
+        [[ -f "$cache_dir/$cache_file_name" ]] && read -r cached_profile < "$cache_dir/$cache_file_name" && [[ -n "$cached_profile" ]] && echo "Found global cache: [$cached_profile]"
     else
         echo "Starting Krabby build for local project (Mode: $cargo_cmd)"
         [[ -f ".v3compile" ]] && read -r cached_profile < ".v3compile" && [[ -n "$cached_profile" ]] && echo "Found project override: [$cached_profile]"
@@ -136,7 +137,7 @@ _krabby_compile() {
 
     if [[ "$cargo_cmd" == "install" ]]; then
         local bin_path=$(cargo install --list 2>/dev/null | awk -v c="$bin_name" -v home="$HOME" \
-            '$0 ~ "^"c" v" {m=1; next} /^[^[:space:]]/ {m=0} m {f=home "/.cargo/bin/" $1; if (system("test -f " f) == 0) print f}')
+            '($0 ~ "^"c" v") || index($0, "(" c) {m=1; next} /^[^[:space:]]/ {m=0} m {f=home "/.cargo/bin/" $1; if (system("test -f " f) == 0) print f}')
         local count_crosslto=$(_krabby_get_count "$bin_path")
         xargs -d'\n' -r cp -a --target-directory="$work_dir/stage/" <<< "$bin_path"
 
@@ -159,7 +160,7 @@ _krabby_compile() {
         fi
 
         mkdir -p "$cache_dir"
-        echo "$winning_profile" > "$cache_dir/$bin_name"
+        echo "$winning_profile" > "$cache_dir/$cache_file_name"
     else
         echo "Testing incremental cache with noc profile (3s timeout)..."
         _compile_profile "noc" "" "" "$COMMON_RUSTFLAGS -C linker=clang -C linker-plugin-lto" "3s"
@@ -211,19 +212,29 @@ SUBCOMMANDS:
             RUSTC_BOOTSTRAP=1 CC=clang CXX=clang++ AR=llvm-ar RANLIB=llvm-ranlib \
             CFLAGS="$cflags" CXXFLAGS="$cxxflags" RUSTFLAGS="$rustflags" \
             exec "$@" ;;
+            
     	install) shift
         		 [[ -z "${1:-}" ]] && { echo "Error: 'krabby install' requires at least one crate name."; exit 1; }
-        		 local old_crates_list="$(_cargo_list)" has_flags=0
-        		 for arg in "$@"; do [[ "$arg" == -* ]] && { has_flags=1; break; }; done
-        		 if (( has_flags )); then
-            		 local bin_name="$1"; shift
-            		 _krabby_compile install "--force $*" "$bin_name" || { echo "Install failed for: $bin_name"; exit 1; }
-        		 else
-            		 for _bin in "$@"; do
-            		     _krabby_compile install --force "$_bin" || { echo "Install failed for: $_bin"; exit 1; }
-            		 done
-        		 fi
+        		 local old_crates_list="$(_cargo_list)" bins=() flags=() parsing_flags=0 c_args
+                 
+                 for arg in "$@"; do
+                     if (( parsing_flags )) || [[ "$arg" == -* ]]; then
+                         parsing_flags=1
+                         flags+=("$arg")
+                     else
+                         bins+=("$arg")
+                     fi
+                 done
+                 
+                 [[ ${#bins[@]} -eq 0 ]] && { echo "Error: no crate specified."; exit 1; }
+                 
+                 for _bin in "${bins[@]}"; do
+                     c_arg="--force ${flags[*]}"
+                     [[ "$_bin" == http*://* ]] && c_arg="--force --git ${flags[*]}"
+                     _krabby_compile install "$c_arg" "$_bin" || { echo "Install failed for: $_bin"; exit 1; }
+                 done
         		 _krabby_sync "$old_crates_list" ;;
+        		 
         uninstall) shift
             	   local old_crates_list="$(_cargo_list)"
             	   for _bin in "$@"; do
@@ -231,6 +242,7 @@ SUBCOMMANDS:
                 		cargo uninstall "$_bin"
             	   done
             	   _krabby_sync "$old_crates_list" ;;
+            	   
         *) [[ -f Cargo.toml ]] || { _krabby_main help; exit 1; }
            _krabby_compile build "--release $*" || { echo "Build failed!"; exit 1; } ;;
     esac

@@ -69,7 +69,8 @@ chmod +x ~/.local/bin/krabby
 ## Usage
 
 - `krabby [args...]` - Build the local project (auto-detects Cargo.toml). Arguments are passed directly to `cargo build`. Note: `--release` and `--locked` are automatically enabled.
-- `krabby install <crate> [args...]` - Install/compile a crate from crates.io with FFI profiling. You can pass any `cargo install` flags (like `--features`) after the crate name. Note: `--locked` is automatically enabled.
+- `krabby install <crate_or_url>... [cargo_flags...]` - Install/compile crates from crates.io or Git repositories (auto-detected via `http(s)://`). Supports multi-binary installs and applies cargo flags (like `--features`) safely across all crates sequentially. Note: `--locked` is automatically enabled.
+- `krabby inject [profile] <cmd>` - Execute an arbitrary command with Krabby's aggressive compiler environment variables (`CFLAGS`, `RUSTFLAGS`, etc.) injected. Profile defaults to `crosslto` but can be explicitly set to `rust`.
 - `krabby uninstall <crate>` - Uninstall a crate
 - `krabby update` - Check crates.io and upgrade all installed binaries
 - `krabby list` - List all cargo-installed binaries
