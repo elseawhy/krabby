@@ -49,6 +49,11 @@ _krabby_update() {
     } > "$tmpfile" &
     spinner "$!" "Checking crates.io..."
 
+    [[ -s "$tmpfile" ]] || { echo "😴 All installed crates are up to date."; return 0; }
+    echo "👀 Crates to be upgraded:"
+    awk '{print "  - " $1 ": " $2 " -> " $3}' "$tmpfile"
+    read -rp $'\n🚀 Proceed with upgrade? [Enter to confirm, Ctrl+C to abort] '
+
     while read -r crate_name old_version new_version; do
         if [[ "$crate_name" == "sudo-rs" ]]; then
             _handle_sudo_rs "$old_version" "$new_version" && upgraded_crates+=("$crate_name: $old_version -> $new_version")

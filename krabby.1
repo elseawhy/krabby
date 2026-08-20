@@ -1,0 +1,72 @@
+.TH KRABBY 1 "August 2026" krabby "User Commands"
+.SH NAME
+krabby \- an aggressive, performance-obsessed wrapper around cargo
+.SH SYNOPSIS
+.B krabby
+.RI [ args... ]
+.br
+.B krabby install
+.IR crate_or_url...
+.RI [ cargo_flags... ]
+.br
+.B krabby inject
+.RI [ profile ]
+.IR cmd
+.br
+.B krabby uninstall
+.IR crate
+.br
+.B krabby update
+.br
+.B krabby list
+.br
+.B krabby help
+.SH DESCRIPTION
+\fBkrabby\fR replaces day-to-day \fBcargo build\fR, \fBinstall\fR, and \fBupdate\fR usage with an aggressive build pipeline that auto-tunes build profiles per binary.
+
+It enforces native optimizations (\fB-march=native\fR, \fB-C target-cpu=native\fR), full LTO, \fBlld\fR as the linker, and strict hardening flags (\fBFORTIFY_SOURCE=3\fR, stack protectors, etc.) baked into every build.
+
+On a cache miss, it probes two build profiles per binary (\fBcrosslto\fR and \fBrust\fR) to determine if C/C++ FFI dependencies actually benefit from cross-language LTO. It caches the winning profile locally or globally, and reuses it on future builds to eliminate probing overhead.
+.SH COMMANDS
+.TP
+.B [args...]
+Build the local project (auto-detects Cargo.toml). Arguments are passed directly to \fBcargo build\fR. Note: \fB--release\fR and \fB--locked\fR are automatically enabled.
+.TP
+.B install \fIcrate_or_url...\fR \fI[cargo_flags...]\fR
+Install or compile crates from crates.io or Git repositories. Supports multi-binary installs and applies cargo flags sequentially. Note: \fB--locked\fR is automatically enabled.
+.TP
+.B inject \fI[profile]\fR \fIcmd\fR
+Execute an arbitrary command with Krabby's aggressive compiler environment variables injected. The profile defaults to \fBcrosslto\fR but can be explicitly set to \fBrust\fR.
+.TP
+.B uninstall \fIcrate\fR
+Uninstall a cargo crate.
+.TP
+.B update
+Check crates.io and upgrade all installed binaries. Special-cases \fBsudo-rs\fR upgrades to ensure functional binaries via automatic backup and rollback.
+.TP
+.B list
+List all cargo-installed binaries.
+.TP
+.B help
+Show usage information.
+.SH ENVIRONMENT
+.TP
+.B KRABBY_SYNC_ENABLED
+Set to 1 to enable pkglist-cargo.txt syncing to ~/dotfiles on install/uninstall.
+.TP
+.B XDG_CACHE_HOME
+Base directory for the per-binary profile cache. Defaults to ~/.cache.
+.SH FILES
+.TP
+.I .v3compile
+Drop this file containing just \fBrust\fR or \fBcrosslto\fR in a project's root to skip probing for that project permanently.
+.TP
+.I ~/.cache/v3compile/<bin_name>
+Global cache storing the winning profile for a binary.
+.SH NOTES
+\fBkrabby\fR binaries are \fBnot portable\fR due to \fB-march=native\fR. They will only run correctly on the CPU they were built on (or a very similar one).
+.br
+.sp
+It leverages \fBRUSTC_BOOTSTRAP=1\fR to enable nightly-gated flags (like \fB-Z build-std\fR) on stable compilers.
+.SH SEE ALSO
+cargo(1), rustc(1)
