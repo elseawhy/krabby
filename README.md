@@ -17,7 +17,6 @@ Built for machines where you're willing to trade portability and compile time fo
   - For `build`, instead of a second full compile, the incremental build is re-run with a 3-second timeout — if cargo rebuilds anything, C/C++ deps are involved and `crosslto` wins. If instruction counts are equal (or the incremental probe finishes instantly), `rust` is used. The winner is cached and all future builds skip straight to it.
 - **Per-binary caching**: winning profiles are stored as individual files under `~/.cache/v3compile/<bin_name>` for `install` (e.g. `~/.cache/v3compile/ripgrep` contains just `rust` or `crosslto`), or in a local `.v3compile` file for project builds — so subsequent builds skip straight to the fast path instead of re-probing.
 - **Crate update checking** (`krabby update`): checks `crates.io` for newer versions of every `cargo install`-ed binary and recompiles anything out of date.
-- **Special-cased `sudo-rs` upgrades**: backs up the existing `sudo` binary, verifies the new one actually works before committing, and restores the backup automatically if compilation or verification fails.
 - **Optional dotfile sync** (`KRABBY_SYNC_ENABLED`): can track the diff of installed cargo binaries into a pkglist file, similar to how Arch users track `pacman` package lists.
 
 ## Requirements
@@ -44,7 +43,6 @@ Built for machines where you're willing to trade portability and compile time fo
 ### Optional
 
 - A CPU that actually benefits from `-march=native` (e.g., AVX2/BMI2 on x86_64, or NEON/SVE on ARM). The current probing logic assumes recent x86_64 hardware; on older CPUs or other architectures, the `crosslto` vs `rust` comparison may just always come back even or fallback to `rust`.
-- `sudo-rs` installed via `cargo install` if you want the automatic backup/verify/rollback handling in `_handle_sudo_rs` to matter.
 - `$HOME/dotfiles/pkglist-cargo.txt` tracking, if you set `KRABBY_SYNC_ENABLED=1`.
 
 ### Installation
@@ -118,7 +116,6 @@ Per-project overrides: drop a `.v3compile` file (containing just `rust` or `cros
 
 - **Not portable**: binaries built with `-march=native` will only run correctly on the same (or a very similar) CPU. Don't ship these artifacts elsewhere.
 - **Nightly-gated flags via `RUSTC_BOOTSTRAP=1`**: this bypasses the stable/nightly gate, so a plain stable `rustc` (from `pacman`, `apt`, etc.) is sufficient — no `rustup` or nightly toolchain needed. That said, it is inherently fragile across `rustc` versions — expect occasional breakage when Rust changes internals of `-Z build-std` or other unstable flags.
-- **`sudo-rs` upgrade path** modifies binary ownership/permissions (`chown root:root`, `chmod 4755`) — review `_handle_sudo_rs` before relying on it in an unattended context.
 - Deleting `~/.cache/v3compile/<bin_name>` (or the per-project `.v3compile`) forces re-probing on the next build.
 
 ## Build Flags Reference

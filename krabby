@@ -55,10 +55,6 @@ _krabby_update() {
     read -rp $'\n🚀 Proceed with upgrade? [Enter to confirm, Ctrl+C to abort] '
 
     while read -r crate_name old_version new_version; do
-        if [[ "$crate_name" == "sudo-rs" ]]; then
-            _handle_sudo_rs "$old_version" "$new_version" && upgraded_crates+=("$crate_name: $old_version -> $new_version")
-            continue
-        fi
         echo "Upgrading $crate_name ($old_version -> $new_version)..."
         if _krabby_compile install --force "$crate_name"; then
             upgraded_crates+=("$crate_name: $old_version -> $new_version")
@@ -68,30 +64,6 @@ _krabby_update() {
     done < "$tmpfile"
 
     (( ${#upgraded_crates[@]} )) && { echo "Upgraded binaries:"; printf '  -> %s\n' "${upgraded_crates[@]}"; }
-}
-
-_handle_sudo_rs() {
-    local cargo_bin_dir="$HOME/.cargo/bin" backup_dir="${XDG_STATE_HOME:-$HOME/.local/state}/sudo-rs/v$1"
-    local live_sudo="$cargo_bin_dir/sudo"
-
-    echo "Upgrading sudo-rs ($1 -> $2)..."
-
-    "$live_sudo" mkdir -p "$backup_dir"
-    "$live_sudo" cp -a "$cargo_bin_dir/"{sudo,visudo,su} "$backup_dir/" \
-        || { echo "Abort: could not backup sudo-rs binaries."; return 1; }
-
-    "$backup_dir/sudo" true 2>/dev/null || { echo "Abort: backup verification failed."; return 1; }
-
-    if _krabby_compile install --force sudo-rs; then
-        "$backup_dir/sudo" chown root:root "$cargo_bin_dir/"{sudo,visudo,su}
-        "$backup_dir/sudo" chmod 4755 "$cargo_bin_dir/"{sudo,su}
-        "$backup_dir/sudo" chmod 755 "$cargo_bin_dir/visudo"
-        echo "Fallback retained at: $backup_dir"
-    else
-        echo "Compilation failed. Restoring backup."
-        "$backup_dir/sudo" cp -a "$backup_dir/"{sudo,visudo,su} "$cargo_bin_dir/"
-        return 1
-    fi
 }
 
 _krabby_get_count() {
@@ -243,7 +215,6 @@ SUBCOMMANDS:
         uninstall) shift
             	   local old_crates_list="$(_cargo_list)"
             	   for _bin in "$@"; do
-                		[[ "$_bin" == "sudo-rs" ]] && { echo "Warning: skipping sudo-rs — refusing to uninstall it via krabby. Remove it manually if you're certain."; continue; }
                 		cargo uninstall "$_bin"
             	   done
             	   _krabby_sync "$old_crates_list" ;;
