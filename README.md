@@ -15,8 +15,8 @@ Built for machines where you're willing to trade portability and compile time fo
 
   - For `install`, both profiles are compiled and the resulting binaries disassembled to count advanced instructions as a proxy for whether cross-LTO actually changed codegen (e.g., BMI2/AVX2 ops on x86_64). On non-x86_64 hosts, the script is designed to support any architecture by auto-detecting the host target, but the current instruction-counting heuristic is x86_64-specific (it will conservatively fall back to the `rust` profile). Contributors on ARM and other hardware are welcome to help expand these heuristics!
   - For `build`, instead of a second full compile, the incremental build is re-run with a 3-second timeout — if cargo rebuilds anything, C/C++ deps are involved and `crosslto` wins. If instruction counts are equal (or the incremental probe finishes instantly), `rust` is used. The winner is cached and all future builds skip straight to it.
-- **Per-binary caching**: winning profiles are stored as individual files under `~/.cache/v3compile/<bin_name>` for `install` (e.g. `~/.cache/v3compile/ripgrep` contains just `rust` or `crosslto`), or in a local `.v3compile` file for project builds — so subsequent builds skip straight to the fast path instead of re-probing.
-- **Crate update checking** (`krabby update`): checks `crates.io` for newer versions of every `cargo install`-ed binary and recompiles anything out of date.
+- **Per-binary caching**: winning profiles are stored as individual files under `~/.cache/krabby/<bin_name>` for `install` (e.g. `~/.cache/krabby/ripgrep` contains just `rust` or `crosslto`), or in a local `.krabby` file for project builds — so subsequent builds skip straight to the fast path instead of re-probing.
+- **Crate update checking** (`krabby update`): checks `crates.io` for newer versions of every `cargo install`-ed binary and recompiles anything out of date. Supports holding packages back via `krabby hold`.
 - **Optional dotfile sync** (`KRABBY_SYNC_ENABLED`): can track the diff of installed cargo binaries into a pkglist file, similar to how Arch users track `pacman` package lists.
 
 ## Requirements
@@ -72,6 +72,8 @@ chmod +x ~/.local/bin/krabby
 - `krabby uninstall <crate>` - Uninstall a crate
 - `krabby update` - Check crates.io and upgrade all installed binaries
 - `krabby list` - List all cargo-installed binaries
+- `krabby hold <crate>...` - Prevent one or more packages from being updated
+- `krabby unhold <crate>...` - Allow a package to be updated again
 - `krabby help` - Show usage
 
 ### First build of a crate/project
@@ -108,15 +110,16 @@ Final binary built via fast-path [rust].
 | Variable | Default | Purpose |
 |---|---|---|
 | `KRABBY_SYNC_ENABLED` | `0` | Set to `1` to enable pkglist-cargo.txt syncing to `~/dotfiles` on install/uninstall |
-| `XDG_CACHE_HOME` | `~/.cache` | Where the per-binary profile cache (`v3compile/<bin_name>`) is stored |
+| `XDG_CACHE_HOME` | `~/.cache` | Where the per-binary profile cache (`krabby/<bin_name>`) is stored |
+| `XDG_CONFIG_HOME` | `~/.config` | Where the package hold list (`krabby/hold`) is stored |
 
-Per-project overrides: drop a `.v3compile` file (containing just `rust` or `crosslto`) in a project's root to skip probing for that project permanently.
+Per-project overrides: drop a `.krabby` file (containing just `rust` or `crosslto`) in a project's root to skip probing for that project permanently.
 
 ## ⚠️ Caveats
 
 - **Not portable**: binaries built with `-march=native` will only run correctly on the same (or a very similar) CPU. Don't ship these artifacts elsewhere.
 - **Nightly-gated flags via `RUSTC_BOOTSTRAP=1`**: this bypasses the stable/nightly gate, so a plain stable `rustc` (from `pacman`, `apt`, etc.) is sufficient — no `rustup` or nightly toolchain needed. That said, it is inherently fragile across `rustc` versions — expect occasional breakage when Rust changes internals of `-Z build-std` or other unstable flags.
-- Deleting `~/.cache/v3compile/<bin_name>` (or the per-project `.v3compile`) forces re-probing on the next build.
+- Deleting `~/.cache/krabby/<bin_name>` (or the per-project `.krabby`) forces re-probing on the next build.
 
 ## Build Flags Reference
 

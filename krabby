@@ -85,13 +85,13 @@ _krabby_compile() {
     trap 'rm -rf "$work_dir" 2>/dev/null; exit 130' INT TERM
 
     if [[ "$cargo_cmd" == "install" ]]; then
-    	local cache_dir="${XDG_CACHE_HOME:-$HOME/.cache}/v3compile"
+    	local cache_dir="${XDG_CACHE_HOME:-$HOME/.cache}/krabby"
         mkdir -p "$work_dir/stage"
         echo "Starting Krabby build for: $bin_name (Mode: $cargo_cmd)"
         [[ -f "$cache_dir/$cache_file_name" ]] && read -r cached_profile < "$cache_dir/$cache_file_name" && [[ -n "$cached_profile" ]] && echo "Found global cache: [$cached_profile]"
     else
         echo "Starting Krabby build for local project (Mode: $cargo_cmd)"
-        [[ -f ".v3compile" ]] && read -r cached_profile < ".v3compile" && [[ -n "$cached_profile" ]] && echo "Found project override: [$cached_profile]"
+        [[ -f ".krabby" ]] && read -r cached_profile < ".krabby" && [[ -n "$cached_profile" ]] && echo "Found project override: [$cached_profile]"
     fi
 
     _compile_profile() {
@@ -155,7 +155,7 @@ _krabby_compile() {
                  local winning_profile="rust" ;;
               *) echo "Probe failed unexpectedly. Aborting."; return 1 ;;
         esac
-        echo "$winning_profile" > .v3compile
+        echo "$winning_profile" > .krabby
     fi
 }
 
