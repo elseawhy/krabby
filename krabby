@@ -30,10 +30,16 @@ _krabby_sync() {
 
 _krabby_update() {
     local upgraded_crates=() tmpfile=$(mktemp)
+    local hold_file="${XDG_CONFIG_HOME:-$HOME/.config}/krabby/hold"
     trap 'rm -f "$tmpfile"' EXIT
 
-    {   while read -r crate_name crate_version _; do
+    {   local -A held_crates
+        [[ -f "$hold_file" ]] && while read -r h_crate; do
+            [[ -n "$h_crate" ]] && held_crates["$h_crate"]=1
+        done < "$hold_file"
+        while read -r crate_name crate_version _; do
             [[ $crate_version == v*: ]] || continue
+            [[ -v held_crates[$crate_name] ]] && continue
             crate_version="${crate_version#v}"; crate_version="${crate_version%:}"
             local prefix
             case ${#crate_name} in
@@ -168,6 +174,8 @@ SUBCOMMANDS:
   [args...]           Build a local project passing args to cargo build (auto-detects Cargo.toml)
   update              Upgrade all installed cargo crates
   list                List all installed cargo binaries
+  hold <binary>       Prevent a package from being updated
+  unhold <binary>     Allow a package to be updated again
   help, -h            Show this help message
 ' ;;
         update|upgrade) _krabby_update ;;
@@ -190,6 +198,22 @@ SUBCOMMANDS:
             CFLAGS="$cflags" CXXFLAGS="$cxxflags" RUSTFLAGS="$rustflags" \
             exec "$@" ;;
             
+        hold) shift
+              [[ -z "${1:-}" ]] && { echo "Error: 'krabby hold' requires a crate name."; exit 1; }
+              local hold_file="${XDG_CONFIG_HOME:-$HOME/.config}/krabby/hold"
+              mkdir -p "${hold_file%/*}"
+              for _bin in "$@"; do
+                  grep -qxE "$_bin" "$hold_file" 2>/dev/null && echo "$_bin is already held." || { echo "$_bin" >> "$hold_file"; echo "Placed $_bin on hold."; }
+              done ;;
+
+        unhold) shift
+              [[ -z "${1:-}" ]] && { echo "Error: 'krabby unhold' requires a crate name."; exit 1; }
+              local hold_file="${XDG_CONFIG_HOME:-$HOME/.config}/krabby/hold"
+              [[ ! -f "$hold_file" ]] && { echo "Hold list is empty."; exit 0; }
+              for _bin in "$@"; do
+                  grep -qxE "$_bin" "$hold_file" 2>/dev/null && { grep -vxE "$_bin" "$hold_file" > "${hold_file}.tmp" && mv "${hold_file}.tmp" "$hold_file"; echo "Removed hold on $_bin."; } || echo "$_bin is not held."
+              done ;;
+
     	install) shift
         		 [[ -z "${1:-}" ]] && { echo "Error: 'krabby install' requires at least one crate name."; exit 1; }
         		 local old_crates_list="$(_cargo_list)" bins=() flags=() parsing_flags=0 c_arg
