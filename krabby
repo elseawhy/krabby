@@ -2,20 +2,20 @@
 readonly KRABBY_SYNC_ENABLED=1
 
 readonly RUST_TARGET="$(rustc -vV | sed -n 's/^host: //p')"
-readonly LLVM_TARGET="$(clang -print-target-triple)"
-export LDFLAGS="-march=native -fuse-ld=lld -Wl,-O1,--sort-common,--as-needed,-z,relro,-z,now,-z,pack-relative-relocs,-plugin-opt=O3,-plugin-opt=mcpu=native -flto"
-readonly CARGO_COMMON_ARGS=(--target "$RUST_TARGET" -Z build-std=std,panic_abort --locked --quiet)
-readonly COMMON_CFLAGS="--target=$LLVM_TARGET -ffat-lto-objects -march=native -O3 -pipe -fno-plt -fexceptions -Wp,-D_FORTIFY_SOURCE=3 -Wformat -Werror=format-security -fstack-clash-protection -fstack-protector-strong -fcf-protection -flto=full"
+export LDFLAGS="-march=native -fuse-ld=lld -Wl,-O1,--sort-common,--as-needed,-z,relro,-z,now,-z,pack-relative-relocs,-plugin-opt=O3,-plugin-opt=mcpu=native -flto=full"
+readonly COMMON_CFLAGS="--target=$(clang -print-target-triple) -ffat-lto-objects -march=native -O3 -pipe -fno-plt -fexceptions -Wp,-D_FORTIFY_SOURCE=3 -Wformat -Werror=format-security -fstack-clash-protection -fstack-protector-strong -fcf-protection -flto=full"
 readonly COMMON_CXXFLAGS="$COMMON_CFLAGS -D_GLIBCXX_ASSERTIONS"
 readonly COMMON_RUSTFLAGS="-C target-cpu=native -C opt-level=3 -Zmir-opt-level=4 -C codegen-units=1 -Z unstable-options -C panic=immediate-abort${LDFLAGS:+ -Clink-arg=${LDFLAGS// / -Clink-arg=}}"
 
 spinner() {
     local spinstr='-\|/'
     while kill -0 "$1" 2>/dev/null; do
-        echo -en "\r\e[K [${spinstr:0:1}] $2"
-        spinstr="${spinstr:1}${spinstr:0:1}"; sleep 0.1
+        printf '\r\e[K [%s] %s' "${spinstr:0:1}" "$2"
+        spinstr="${spinstr:1}${spinstr:0:1}"
+        sleep 0.1
     done
-    echo -en "\r\e[K"; wait "$1" 2>/dev/null
+    printf '\r\e[K'
+    wait "$1" 2>/dev/null
 }
 
 _cargo_list() {
@@ -32,32 +32,27 @@ _krabby_sync() {
 
 _krabby_update() {
     local upgraded_crates=() tmpfile=$(mktemp)
-    local hold_file="${XDG_CONFIG_HOME:-$HOME/.config}/krabby/hold"
     trap 'rm -f "$tmpfile"' EXIT
 
-    {   local -A held_crates
-        [[ -f "$hold_file" ]] && while read -r h_crate; do
-            [[ -n "$h_crate" ]] && held_crates["$h_crate"]=1
-        done < "$hold_file"
-        while read -r crate_name crate_version _; do
-            [[ $crate_version == v*: ]] || continue
-            [[ -v held_crates[$crate_name] ]] && continue
-            crate_version="${crate_version#v}"; crate_version="${crate_version%:}"
-            local prefix
-            case ${#crate_name} in
-                1) prefix="1/$crate_name" ;;
-                2) prefix="2/$crate_name" ;;
-                3) prefix="3/${crate_name:0:1}/$crate_name" ;;
-                *) prefix="${crate_name:0:2}/${crate_name:2:2}/$crate_name" ;;
-            esac
-            local latest
-            latest=$(curl -sf "https://index.crates.io/$prefix" | grep -oP '"vers":"\K[^"]+' | tail -1)
-            [[ -n "$latest" && "$crate_version" != "$latest" ]] && echo "$crate_name $crate_version $latest"
-        done < <(cargo install --list 2>/dev/null)
-    } > "$tmpfile" &
+    cargo install --list 2>/dev/null | awk -v h="${XDG_CONFIG_HOME:-$HOME/.config}/krabby/hold" '
+        BEGIN { while ((getline < h) > 0) held[$1]=1; close(h) }
+        $2 ~ /^v.*:/ && !held[$1] {
+            namelen = length($1)
+            cratever = substr($2, 2, length($2)-2)
+            prefix = namelen==1 ? "1/"$1 : namelen==2 ? "2/"$1 : namelen==3 ? "3/"substr($1,1,1)"/"$1 : substr($1,1,2)"/"substr($1,3,2)"/"$1
+            latest = ""
+            while (("curl -sf https://index.crates.io/" prefix | getline line) > 0) {
+                if (match(line, /"vers":"[^"]+"/)) latest = substr(line, RSTART+8, RLENGTH-9)
+            }
+            close("curl -sf https://index.crates.io/" prefix)
+            if (latest != "" && cratever != latest) print $1, cratever, latest
+        }' > "$tmpfile" &
     spinner "$!" "Checking crates.io..."
 
-    [[ -s "$tmpfile" ]] || { echo "😴 All installed crates are up to date."; return 0; }
+    [[ -s "$tmpfile" ]] || {
+    	echo "😴 All installed crates are up to date."
+    	return 0
+    }
     echo "👀 Crates to be upgraded:"
     awk '{print "  - " $1 ": " $2 " -> " $3}' "$tmpfile"
     read -rp $'\n🚀 Proceed with upgrade? [Enter to confirm, Ctrl+C to abort] '
@@ -71,7 +66,10 @@ _krabby_update() {
         fi
     done < "$tmpfile"
 
-    (( ${#upgraded_crates[@]} )) && { echo "Upgraded binaries:"; printf '  -> %s\n' "${upgraded_crates[@]}"; }
+    (( ${#upgraded_crates[@]} )) && {
+    	echo "Upgraded binaries:"
+    	printf '  -> %s\n' "${upgraded_crates[@]}"
+    }
 }
 
 _krabby_get_count() {
@@ -98,15 +96,16 @@ _krabby_compile() {
 
     _compile_profile() {
         RUSTC_BOOTSTRAP=1 CC=clang CXX=clang++ AR=llvm-ar RANLIB=llvm-ranlib CFLAGS="$2" CXXFLAGS="$3" RUSTFLAGS="$4" \
-        ${5:+timeout} ${5:+"$5"} cargo "$cargo_cmd" "${CARGO_COMMON_ARGS[@]}" $cargo_arg ${bin_target:+"$bin_target"} > "$work_dir/build.log" 2>&1 &
+        ${5:+timeout} ${5:+"$5"} cargo "$cargo_cmd" --target "$RUST_TARGET" -Z build-std=std,panic_abort --locked --quiet $cargo_arg ${bin_target:+"$bin_target"} > "$work_dir/build.log" 2>&1 &
         spinner "$!" "Compiling profile: [$1]..." || {
             [[ -n "$5" && $? -eq 124 ]] && return 124
             echo "Build failed for profile [$1]!"
-            echo "$(< "$work_dir/build.log")"; return 1
+            echo "$(< "$work_dir/build.log")"
+            return 1
         }
     }
 
-    if [[ -n "$cached_profile" ]]; then
+    [[ -n "$cached_profile" ]] && {
         echo "Skipping FFI probes. Fast-tracking..."
         if [[ "$cached_profile" == "crosslto" ]]; then
             _compile_profile "crosslto" "$COMMON_CFLAGS" "$COMMON_CXXFLAGS" "$COMMON_RUSTFLAGS -C linker=clang -C linker-plugin-lto" || return 1
@@ -115,7 +114,7 @@ _krabby_compile() {
         fi
         echo "Final binary built via fast-path [$cached_profile]."
         return 0
-    fi
+    }
 
     echo "No cache found. Initiating FFI probes..."
     _compile_profile "crosslto" "$COMMON_CFLAGS" "$COMMON_CXXFLAGS" "$COMMON_RUSTFLAGS -C linker=clang -C linker-plugin-lto" || return 1
@@ -150,12 +149,19 @@ _krabby_compile() {
         echo "Testing incremental cache with noc profile (3s timeout)..."
         _compile_profile "noc" "" "" "$COMMON_RUSTFLAGS -C linker=clang -C linker-plugin-lto" "3s"
         case $? in
-            124) echo "Cargo is rebuilding FFI (exceeded 3s)! crosslto takes the crown." 
-            	 local winning_profile="crosslto" ;;
-              0) echo "Incremental build finished instantly! No FFI flags mattered."
-                 _compile_profile "rust" "" "" "$COMMON_RUSTFLAGS" || return 1
-                 local winning_profile="rust" ;;
-              *) echo "Probe failed unexpectedly. Aborting."; return 1 ;;
+            124)
+                echo "Cargo is rebuilding FFI (exceeded 3s)! crosslto takes the crown."
+                local winning_profile="crosslto"
+                ;;
+            0)
+                echo "Incremental build finished instantly! No FFI flags mattered."
+                _compile_profile "rust" "" "" "$COMMON_RUSTFLAGS" || return 1
+                local winning_profile="rust"
+                ;;
+            *)
+                echo "Probe failed unexpectedly. Aborting."
+                return 1
+                ;;
         esac
         echo "$winning_profile" > .krabby
     fi
@@ -163,7 +169,8 @@ _krabby_compile() {
 
 _krabby_main() {
     case "${1:-}" in
-        help|-h|--help) echo '
+        help|-h|--help)
+            echo '
 🦀 krabby package manager - Extreme performance cargo wrapper
 
 USAGE:
@@ -179,9 +186,15 @@ SUBCOMMANDS:
   hold <binary>       Prevent a package from being updated
   unhold <binary>     Allow a package to be updated again
   help, -h            Show this help message
-' ;;
-        update|upgrade) _krabby_update ;;
-        list) echo "📦 Installed Cargo Binaries:"; cargo install --list ;;
+'
+            ;;
+        update|upgrade)
+            _krabby_update
+            ;;
+        list)
+            echo "📦 Installed Cargo Binaries:"
+            cargo install --list
+            ;;
         run|env|inject)
             shift
             local profile="crosslto"
@@ -189,64 +202,105 @@ SUBCOMMANDS:
                 profile="$1"
                 shift
             fi
-            [[ -z "${1:-}" ]] && { echo "Error: 'krabby inject' requires a command to execute."; exit 1; }
-            local cflags="" cxxflags="" rustflags="$COMMON_RUSTFLAGS"
+            [[ -z "${1:-}" ]] && {
+                echo "Error: 'krabby inject' requires a command to execute."
+                exit 1
+            }
             if [[ "$profile" == "crosslto" ]]; then
-                cflags="$COMMON_CFLAGS"
-                cxxflags="$COMMON_CXXFLAGS"
-                rustflags="$COMMON_RUSTFLAGS -C linker=clang -C linker-plugin-lto"
+                local cflags="$COMMON_CFLAGS" cxxflags="$COMMON_CXXFLAGS" rustflags="$COMMON_RUSTFLAGS -C linker=clang -C linker-plugin-lto"
+            else
+                local cflags="" cxxflags="" rustflags="$COMMON_RUSTFLAGS"
             fi
             RUSTC_BOOTSTRAP=1 CC=clang CXX=clang++ AR=llvm-ar RANLIB=llvm-ranlib \
+            CARGO_UNSTABLE_BUILD_STD="std,panic_abort" CARGO_BUILD_TARGET="$RUST_TARGET" \
             CFLAGS="$cflags" CXXFLAGS="$cxxflags" RUSTFLAGS="$rustflags" \
-            exec "$@" ;;
-            
-        hold) shift
-              [[ -z "${1:-}" ]] && { echo "Error: 'krabby hold' requires a crate name."; exit 1; }
-              local hold_file="${XDG_CONFIG_HOME:-$HOME/.config}/krabby/hold"
-              mkdir -p "${hold_file%/*}"
-              for _bin in "$@"; do
-                  grep -qxE "$_bin" "$hold_file" 2>/dev/null && echo "$_bin is already held." || { echo "$_bin" >> "$hold_file"; echo "Placed $_bin on hold."; }
-              done ;;
-
-        unhold) shift
-              [[ -z "${1:-}" ]] && { echo "Error: 'krabby unhold' requires a crate name."; exit 1; }
-              local hold_file="${XDG_CONFIG_HOME:-$HOME/.config}/krabby/hold"
-              [[ ! -f "$hold_file" ]] && { echo "Hold list is empty."; exit 0; }
-              for _bin in "$@"; do
-                  grep -qxE "$_bin" "$hold_file" 2>/dev/null && { grep -vxE "$_bin" "$hold_file" > "${hold_file}.tmp" && mv "${hold_file}.tmp" "$hold_file"; echo "Removed hold on $_bin."; } || echo "$_bin is not held."
-              done ;;
-
-    	install) shift
-        		 [[ -z "${1:-}" ]] && { echo "Error: 'krabby install' requires at least one crate name."; exit 1; }
-        		 local old_crates_list="$(_cargo_list)" bins=() flags=() parsing_flags=0 c_arg
-                 
-                 for arg in "$@"; do
-                     if (( parsing_flags )) || [[ "$arg" == -* ]]; then
-                         parsing_flags=1
-                         flags+=("$arg")
-                     else
-                         bins+=("$arg")
-                     fi
-                 done
-                 
-                 [[ ${#bins[@]} -eq 0 ]] && { echo "Error: no crate specified."; exit 1; }
-                 
-                 for _bin in "${bins[@]}"; do
-                     c_arg="--force ${flags[*]}"
-                     [[ "$_bin" == http*://* ]] && c_arg="--force --git ${flags[*]}"
-                     _krabby_compile install "$c_arg" "$_bin" || { echo "Install failed for: $_bin"; exit 1; }
-                 done
-        		 _krabby_sync "$old_crates_list" ;;
-        		 
-        uninstall) shift
-            	   local old_crates_list="$(_cargo_list)"
-            	   for _bin in "$@"; do
-                		cargo uninstall "$_bin"
-            	   done
-            	   _krabby_sync "$old_crates_list" ;;
-            	   
-        *) [[ -f Cargo.toml ]] || { _krabby_main help; exit 1; }
-           _krabby_compile build "--release $*" || { echo "Build failed!"; exit 1; } ;;
+            exec "$@"
+            ;;
+        hold)
+            shift
+            [[ -z "${1:-}" ]] && {
+                echo "Error: 'krabby hold' requires a crate name."
+                exit 1
+            }
+            local hold_file="${XDG_CONFIG_HOME:-$HOME/.config}/krabby/hold"
+            mkdir -p "${hold_file%/*}"
+            for _bin in "$@"; do
+                if grep -qxE "$_bin" "$hold_file" 2>/dev/null; then
+                    echo "$_bin is already held."
+                else
+                    echo "$_bin" >> "$hold_file"
+                    echo "Placed $_bin on hold."
+                fi
+            done
+            ;;
+        unhold)
+            shift
+            [[ -z "${1:-}" ]] && {
+                echo "Error: 'krabby unhold' requires a crate name."
+                exit 1
+            }
+            local hold_file="${XDG_CONFIG_HOME:-$HOME/.config}/krabby/hold"
+            [[ ! -f "$hold_file" ]] && {
+                echo "Hold list is empty."
+                exit 0
+            }
+            for _bin in "$@"; do
+                if grep -qxE "$_bin" "$hold_file" 2>/dev/null; then
+                    grep -vxE "$_bin" "$hold_file" > "${hold_file}.tmp"
+                    mv "${hold_file}.tmp" "$hold_file"
+                    echo "Removed hold on $_bin."
+                else
+                    echo "$_bin is not held."
+                fi
+            done
+            ;;
+        install)
+            shift
+            [[ -z "${1:-}" ]] && {
+                echo "Error: 'krabby install' requires at least one crate name."
+                exit 1
+            }
+            local old_crates_list="$(_cargo_list)" bins=() flags=() parsing_flags=0 c_arg
+            for arg in "$@"; do
+                if (( parsing_flags )) || [[ "$arg" == -* ]]; then
+                    parsing_flags=1
+                    flags+=("$arg")
+                else
+                    bins+=("$arg")
+                fi
+            done 
+            [[ ${#bins[@]} -eq 0 ]] && {
+                echo "Error: no crate specified."
+                exit 1
+            }
+            for _bin in "${bins[@]}"; do
+                c_arg="--force ${flags[*]}"
+                [[ "$_bin" == http*://* ]] && c_arg="--force --git ${flags[*]}"
+                _krabby_compile install "$c_arg" "$_bin" || { 
+                    echo "Install failed for: $_bin"
+                    exit 1
+                }
+            done
+            _krabby_sync "$old_crates_list"
+            ;;
+        uninstall)
+            shift
+            local old_crates_list="$(_cargo_list)"
+            for _bin in "$@"; do
+                cargo uninstall "$_bin"
+            done
+            _krabby_sync "$old_crates_list"
+            ;;
+        *)
+            [[ -f Cargo.toml ]] || {
+                _krabby_main help
+                exit 0
+            }
+            _krabby_compile build "--release $*" || {
+                echo "Build failed!"
+                exit 1
+            }
+            ;;
     esac
 }
 
