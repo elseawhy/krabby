@@ -21,7 +21,7 @@ Built for machines where you're willing to trade portability and compile time fo
 
 ## Requirements
 
-`krabby` targets **Linux** systems. The host target triple is now auto-detected via `rustc -vV`, making the core build pipeline portable across architectures (x86_64, AArch64, RISC-V, etc.). The current FFI probe heuristic inspects BMI2/AVX2 instructions and is **x86_64-specific** — on other architectures it always returns 0 and krabby conservatively defaults to the `rust` profile while still applying all other aggressive optimizations (`-march=native`, `-C target-cpu=native`, LLVM tools). **Contributors with ARM or other non-x86_64 hardware are highly encouraged to submit PRs to expand the FFI probing heuristics!**
+`krabby` targets **Linux** systems. The host target triple is now auto-detected via `rustc -vV` and `clang -print-target-triple`, making the core build pipeline portable across architectures (x86_64, AArch64, RISC-V, etc.). The current FFI probe heuristic inspects BMI2/AVX2 instructions and is **x86_64-specific** — on other architectures it always returns 0 and krabby conservatively defaults to the `rust` profile while still applying all other aggressive optimizations (`-march=native`, `-C target-cpu=native`, LLVM tools). **Contributors with ARM or other non-x86_64 hardware are highly encouraged to submit PRs to expand the FFI probing heuristics!**
 
 ### Required
 
@@ -30,7 +30,7 @@ Built for machines where you're willing to trade portability and compile time fo
 | `bash` (4+) | The script itself (`#!/usr/bin/env bash`) |
 | `rustc` + `cargo` | Core build tooling. A **stable** toolchain is sufficient — the script uses `-Z build-std`, `-Z unstable-options`, and `-Zmir-opt-level`, gated via `RUSTC_BOOTSTRAP=1`. **On Arch Linux** (or any distro shipping the latest stable): `sudo pacman -S rust` (or your package manager's equivalent) is recommended. **On all other distros**: use [rustup](https://rustup.rs) — `apt`/`dnf` often lag months behind upstream and may ship a version too old for some flags. |
 | `rust-src` | Required for `-Z build-std=std,panic_abort`. On Arch: `sudo pacman -S rust-src`. With rustup: `rustup component add rust-src` |
-| Host target triple | Auto-detected at runtime via `rustc -vV` — no manual configuration needed. Bundled with the `rust` package on Arch; available by default with rustup. |
+| Host target triple | Auto-detected at runtime via `rustc -vV` and `clang -print-target-triple` — no manual configuration needed. Bundled with the `rust` package on Arch; available by default with rustup. |
 | `clang` / `clang++` | Used as `CC`/`CXX` for the `crosslto` profile |
 | `llvm-ar`, `llvm-ranlib` | Used as `AR`/`RANLIB` for the `crosslto` profile |
 | `lld` | Linker, invoked via `-fuse-ld=lld` in `LDFLAGS` |
@@ -152,11 +152,13 @@ This section documents every flag set by krabby. All flags are applied through e
 ### `CFLAGS` — C compiler flags
 
 ```
--march=native -O3 -pipe -fno-plt -fexceptions -Wp,-D_FORTIFY_SOURCE=3 -Wformat -Werror=format-security -fstack-clash-protection -fstack-protector-strong -fcf-protection -flto=full
+--target=$LLVM_TARGET -ffat-lto-objects -march=native -O3 -pipe -fno-plt -fexceptions -Wp,-D_FORTIFY_SOURCE=3 -Wformat -Werror=format-security -fstack-clash-protection -fstack-protector-strong -fcf-protection -flto=full
 ```
 
 | Flag | Effect |
 |---|---|
+| `--target=$LLVM_TARGET` | Explicitly targets the LLVM triple (auto-detected via `clang -print-target-triple`) to prevent architecture string mismatches during C/C++ compilation. |
+| `-ffat-lto-objects` | Emits both LLVM bitcode and native machine code into object files. Fixes compatibility issues with `cc` builds that invoke tools expecting standard ELF objects before the final link step. |
 | `-march=native` | Generate code using all instruction set extensions available on the current CPU (SSE4, AVX2, BMI2, etc. on x86_64). Resulting binaries are not portable. |
 | `-O3` | Maximum compiler optimization level. Enables auto-vectorization, aggressive inlining, loop unrolling, and more. |
 | `-pipe` | Uses pipes between compilation stages instead of temporary files. Speeds up compilation on systems with slow I/O. |
