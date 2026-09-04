@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-readonly KRABBY_SYNC_ENABLED=1
 
+readonly KRABBY_SYNC_ENABLED=1
 readonly RUST_TARGET="$(rustc -vV | sed -n 's/^host: //p')"
 export LDFLAGS="-march=native -fuse-ld=lld -Wl,-O1,--sort-common,--as-needed,-z,relro,-z,now,-z,pack-relative-relocs,-plugin-opt=O3,-plugin-opt=mcpu=native -flto=full"
 readonly COMMON_CFLAGS="--target=$(clang -print-target-triple) -ffat-lto-objects -march=native -O3 -pipe -fno-plt -fexceptions -Wp,-D_FORTIFY_SOURCE=3 -Wformat -Werror=format-security -fstack-clash-protection -fstack-protector-strong -fcf-protection -flto=full"
 readonly COMMON_RUSTFLAGS="-C target-cpu=native -C opt-level=3 -Zmir-opt-level=4 -C codegen-units=1 -Z unstable-options -C panic=immediate-abort${LDFLAGS:+ -Clink-arg=${LDFLAGS// / -Clink-arg=}}"
 
-spinner() {
+_krabby_spin() {
     local spinstr='-\|/'
     while kill -0 "$1" 2>/dev/null; do
         printf '\r\e[K [%s] %s' "${spinstr:0:1}" "$2"
@@ -19,6 +19,10 @@ spinner() {
 
 _cargo_list() {
     cargo install --list 2>/dev/null | awk '$2 ~ /^v.*:/ {print $1}'
+}
+
+_krabby_get_count() {
+    echo -n "$1" | tr '\n' '\0' | xargs -0 -r objdump -d 2>/dev/null | grep -E -ic '\b(bzhi|mulx|pdep|pext|rorx|sarx|shlx|shrx|vgather[a-z0-9]*|vpbroadcast[a-z0-9]*|vpermd|vpermq|vperm2i128)\b'
 }
 
 _krabby_sync() {
@@ -46,7 +50,7 @@ _krabby_update() {
             close("curl -sf https://index.crates.io/" prefix)
             if (latest != "" && cratever != latest) print $1, cratever, latest
         }' > "$tmpfile" &
-    spinner "$!" "Checking crates.io..."
+    _krabby_spin "$!" "Checking crates.io..."
 
     if [[ -s "$tmpfile" ]]; then
     	echo "👀 Crates to be upgraded:"
@@ -59,12 +63,6 @@ _krabby_update() {
     else
     	echo "😴 All installed crates are up to date."
 	fi
-}
-
-_krabby_get_count() {
-    local instruction_count=0
-    [[ -n "$1" ]] && instruction_count=$(echo -n "$1" | tr '\n' '\0' | xargs -0 -r objdump -d 2>/dev/null | grep -E -ic '\b(bzhi|mulx|pdep|pext|rorx|sarx|shlx|shrx|vgather[a-z0-9]*|vpbroadcast[a-z0-9]*|vpermd|vpermq|vperm2i128)\b')
-    echo "${instruction_count:-0}"
 }
 
 _krabby_compile() {
@@ -86,7 +84,7 @@ _krabby_compile() {
     _compile_profile() {
         RUSTC_BOOTSTRAP=1 CC=clang CXX=clang++ AR=llvm-ar RANLIB=llvm-ranlib CFLAGS="$2" CXXFLAGS="$3" RUSTFLAGS="$4" \
         ${5:+timeout} ${5:+"$5"} cargo "$cargo_cmd" --target "$RUST_TARGET" -Z build-std=std,panic_abort --locked --quiet $cargo_arg ${bin_target:+"$bin_target"} > "$work_dir/build.log" 2>&1 &
-        spinner "$!" "Compiling profile: [$1]..." || {
+        _krabby_spin "$!" "Compiling profile: [$1]..." || {
             [[ -n "$5" && $? -eq 124 ]] && return 124
             echo "Build failed for profile [$1]!"
             echo "$(< "$work_dir/build.log")"
@@ -107,10 +105,10 @@ _krabby_compile() {
         _compile_profile "crosslto" "$COMMON_CFLAGS" "$COMMON_CFLAGS -D_GLIBCXX_ASSERTIONS" "$COMMON_RUSTFLAGS -C linker=clang -C linker-plugin-lto" || return 1
 
         if [[ "$cargo_cmd" == "install" ]]; then
-            local bin_path=$(cargo install --list 2>/dev/null | awk -v target="$bin_name" -v home="$HOME" '
+            local bin_path=$(cargo install --list 2>/dev/null | awk -v target="$bin_name" -v cargo_bin="${CARGO_HOME:-$HOME/.cargo}/bin" '
                 $0 ~ "^" target " v" || index($0, "(" target) {
                     while (getline > 0 && /^[[:space:]]/) {
-                        binary_path = home "/.cargo/bin/" $1
+                        binary_path = cargo_bin "/" $1
                         if (system("test -f \"" binary_path "\"") == 0) print binary_path
                     }
                     exit
@@ -130,7 +128,7 @@ _krabby_compile() {
             if [[ "${count_crosslto:-0}" != "${count_noc:-0}" ]]; then
                 local winning_profile="crosslto"
                 echo "C/C++ dependencies detected. Restoring staged crosslto binary..."
-                cp -a "$work_dir/stage/"* "$HOME/.cargo/bin/"
+                cp -a "$work_dir/stage/"* "${CARGO_HOME:-$HOME/.cargo}/bin/"
             else
                 local winning_profile="rust"
                 echo "No C/C++ FFI benefits detected. Compiling pure rust profile..."
