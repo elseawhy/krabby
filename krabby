@@ -31,7 +31,7 @@ _krabby_sync() {
 }
 
 _krabby_update() {
-    local upgraded_crates=() tmpfile=$(mktemp)
+    local tmpfile=$(mktemp)
     trap 'rm -f "$tmpfile"' EXIT
 
     cargo install --list 2>/dev/null | awk -v h="${XDG_CONFIG_HOME:-$HOME/.config}/krabby/hold" '
@@ -49,27 +49,17 @@ _krabby_update() {
         }' > "$tmpfile" &
     spinner "$!" "Checking crates.io..."
 
-    [[ -s "$tmpfile" ]] || {
+    if [[ -s "$tmpfile" ]]; then
+    	echo "👀 Crates to be upgraded:"
+    	awk '{print "  - " $1 ": " $2 " -> " $3}' "$tmpfile"
+    	read -rp $'\n🚀 Proceed with upgrade? [Enter to confirm, Ctrl+C to abort] '
+
+    	while read -r crate_name old_version new_version; do
+        	_krabby_compile install --force "$crate_name" || echo "Failed to compile $crate_name"
+    	done < "$tmpfile"
+    else
     	echo "😴 All installed crates are up to date."
-    	return 0
-    }
-    echo "👀 Crates to be upgraded:"
-    awk '{print "  - " $1 ": " $2 " -> " $3}' "$tmpfile"
-    read -rp $'\n🚀 Proceed with upgrade? [Enter to confirm, Ctrl+C to abort] '
-
-    while read -r crate_name old_version new_version; do
-        echo "Upgrading $crate_name ($old_version -> $new_version)..."
-        if _krabby_compile install --force "$crate_name"; then
-            upgraded_crates+=("$crate_name: $old_version -> $new_version")
-        else
-            echo "Failed to compile $crate_name"
-        fi
-    done < "$tmpfile"
-
-    (( ${#upgraded_crates[@]} )) && {
-    	echo "Upgraded binaries:"
-    	printf '  -> %s\n' "${upgraded_crates[@]}"
-    }
+	fi
 }
 
 _krabby_get_count() {
@@ -87,10 +77,10 @@ _krabby_compile() {
     if [[ "$cargo_cmd" == "install" ]]; then
     	local cache_dir="${XDG_CACHE_HOME:-$HOME/.cache}/krabby"
         mkdir -p "$work_dir/stage"
-        echo "Starting Krabby build for: $bin_name (Mode: $cargo_cmd)"
+        echo -e "\nStarting Krabby build for: $bin_name (Mode: $cargo_cmd)"
         [[ -f "$cache_dir/$cache_file_name" ]] && read -r cached_profile < "$cache_dir/$cache_file_name" && [[ -n "$cached_profile" ]] && echo "Found global cache: [$cached_profile]"
     else
-        echo "Starting Krabby build for local project (Mode: $cargo_cmd)"
+        echo -e "\nStarting Krabby build for local project (Mode: $cargo_cmd)"
         [[ -f ".krabby" ]] && read -r cached_profile < ".krabby" && [[ -n "$cached_profile" ]] && echo "Found project override: [$cached_profile]"
     fi
 
