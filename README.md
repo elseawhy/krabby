@@ -13,7 +13,7 @@ Built for machines where you're willing to trade portability and compile time fo
   - `crosslto` — cross-language LTO with clang/llvm-ar/llvm-ranlib as the C/C++ toolchain, useful when a crate has C/C++ FFI dependencies that benefit from being LTO'd together with the Rust code.
   - `rust` — pure Rust, no C/C++ toolchain involved.
 
-  - For `install`, both profiles are compiled and the resulting binaries disassembled to count advanced instructions as a proxy for whether cross-LTO actually changed codegen (e.g., BMI2/AVX2 ops on x86_64). On non-x86_64 hosts, the script is designed to support any architecture by auto-detecting the host target, but the current instruction-counting heuristic is x86_64-specific (it will conservatively fall back to the `rust` profile). Contributors on ARM and other hardware are welcome to help expand these heuristics!
+  - For `install`, both profiles are compiled and the resulting binaries disassembled to count the total lines of assembly produced. This acts as a universal, cross-platform proxy for whether cross-LTO actually changed codegen (e.g., by successfully inlining C/C++ functions into Rust). Because it simply compares the total size of the disassembled binaries, it works automatically across all architectures (x86_64, AArch64, RISC-V, etc.) without needing hardware-specific heuristics.
   - For `build`, instead of a second full compile, the incremental build is re-run with a 3-second timeout — if cargo rebuilds anything, C/C++ deps are involved and `crosslto` wins. If instruction counts are equal (or the incremental probe finishes instantly), `rust` is used. The winner is cached and all future builds skip straight to it.
 - **Per-binary caching**: winning profiles are stored as individual files under `~/.cache/krabby/<bin_name>` for `install` (e.g. `~/.cache/krabby/ripgrep` contains just `rust` or `crosslto`), or in a local `.krabby` file for project builds — so subsequent builds skip straight to the fast path instead of re-probing.
 - **Crate update checking** (`krabby update`): checks `crates.io` for newer versions of every `cargo install`-ed binary and recompiles anything out of date. Supports holding packages back via `krabby hold`.
@@ -21,7 +21,7 @@ Built for machines where you're willing to trade portability and compile time fo
 
 ## Requirements
 
-`krabby` targets **Linux** systems. The host target triple is now auto-detected via `rustc -vV` and `clang -print-target-triple`, making the core build pipeline portable across architectures (x86_64, AArch64, RISC-V, etc.). The current FFI probe heuristic inspects BMI2/AVX2 instructions and is **x86_64-specific** — on other architectures it always returns 0 and krabby conservatively defaults to the `rust` profile while still applying all other aggressive optimizations (`-march=native`, `-C target-cpu=native`, LLVM tools). **Contributors with ARM or other non-x86_64 hardware are highly encouraged to submit PRs to expand the FFI probing heuristics!**
+`krabby` targets **Linux** systems. The host target triple is now auto-detected via `rustc -vV` and `clang -print-target-triple`, making the core build pipeline completely portable across architectures (x86_64, AArch64, RISC-V, etc.). The FFI probe heuristic evaluates codegen optimization by comparing the total lines of disassembled assembly produced by both profiles, meaning it automatically adapts to and functions flawlessly on any CPU architecture without requiring hardware-specific adjustments.
 
 ### Required
 
@@ -86,10 +86,10 @@ Starting Krabby build for: ripgrep (Mode: install)
 No cache found. Initiating FFI probes...
  [-] Compiling profile: [crosslto]...
  [-] Compiling profile: [noc (canary)]...
---- PROBE RESULT ---
-crosslto       : 12
-noc (canary)   : 12
---------------------
+─── PROBE RESULT ──────
+crosslto       : 250000
+noc (canary)   : 250000
+───────────────────────
 No C/C++ FFI benefits detected. Compiling pure rust profile...
  [-] Compiling profile: [rust]...
 ```

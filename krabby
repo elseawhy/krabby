@@ -22,7 +22,7 @@ _cargo_list() {
 }
 
 _krabby_get_count() {
-    echo -n "$1" | tr '\n' '\0' | xargs -0 -r objdump -d 2>/dev/null | grep -E -ic '\b(bzhi|mulx|pdep|pext|rorx|sarx|shlx|shrx|vgather[a-z0-9]*|vpbroadcast[a-z0-9]*|vpermd|vpermq|vperm2i128)\b'
+    echo -n "$1" | tr '\n' '\0' | xargs -0 -r objdump -d 2>/dev/null | wc -l
 }
 
 _krabby_sync() {
