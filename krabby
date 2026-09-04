@@ -4,7 +4,6 @@ readonly KRABBY_SYNC_ENABLED=1
 readonly RUST_TARGET="$(rustc -vV | sed -n 's/^host: //p')"
 export LDFLAGS="-march=native -fuse-ld=lld -Wl,-O1,--sort-common,--as-needed,-z,relro,-z,now,-z,pack-relative-relocs,-plugin-opt=O3,-plugin-opt=mcpu=native -flto=full"
 readonly COMMON_CFLAGS="--target=$(clang -print-target-triple) -ffat-lto-objects -march=native -O3 -pipe -fno-plt -fexceptions -Wp,-D_FORTIFY_SOURCE=3 -Wformat -Werror=format-security -fstack-clash-protection -fstack-protector-strong -fcf-protection -flto=full"
-readonly COMMON_CXXFLAGS="$COMMON_CFLAGS -D_GLIBCXX_ASSERTIONS"
 readonly COMMON_RUSTFLAGS="-C target-cpu=native -C opt-level=3 -Zmir-opt-level=4 -C codegen-units=1 -Z unstable-options -C panic=immediate-abort${LDFLAGS:+ -Clink-arg=${LDFLAGS// / -Clink-arg=}}"
 
 spinner() {
@@ -95,65 +94,71 @@ _krabby_compile() {
         }
     }
 
-    [[ -n "$cached_profile" ]] && {
+    if [[ -n "$cached_profile" ]]; then
         echo "Skipping FFI probes. Fast-tracking..."
         if [[ "$cached_profile" == "crosslto" ]]; then
-            _compile_profile "crosslto" "$COMMON_CFLAGS" "$COMMON_CXXFLAGS" "$COMMON_RUSTFLAGS -C linker=clang -C linker-plugin-lto" || return 1
+            _compile_profile "crosslto" "$COMMON_CFLAGS" "$COMMON_CFLAGS -D_GLIBCXX_ASSERTIONS" "$COMMON_RUSTFLAGS -C linker=clang -C linker-plugin-lto" || return 1
         else
             _compile_profile "rust" "" "" "$COMMON_RUSTFLAGS" || return 1
         fi
         echo "Final binary built via fast-path [$cached_profile]."
-        return 0
-    }
-
-    echo "No cache found. Initiating FFI probes..."
-    _compile_profile "crosslto" "$COMMON_CFLAGS" "$COMMON_CXXFLAGS" "$COMMON_RUSTFLAGS -C linker=clang -C linker-plugin-lto" || return 1
-
-    if [[ "$cargo_cmd" == "install" ]]; then
-        local bin_path=$(cargo install --list 2>/dev/null | awk -v c="$bin_name" -v home="$HOME" \
-            '($0 ~ "^"c" v") || index($0, "(" c) {m=1; next} /^[^[:space:]]/ {m=0} m {f=home "/.cargo/bin/" $1; if (system("test -f " f) == 0) print f}')
-        local count_crosslto=$(_krabby_get_count "$bin_path")
-        xargs -d'\n' -r cp -a --target-directory="$work_dir/stage/" <<< "$bin_path"
-
-        _compile_profile "noc" "" "" "$COMMON_RUSTFLAGS -C linker=clang -C linker-plugin-lto"
-        local count_noc=$(_krabby_get_count "$bin_path")
-
-        echo "--- PROBE RESULT ---"
-        echo "crosslto       : ${count_crosslto:-0}"
-        echo "noc (canary)   : ${count_noc:-0}"
-        echo "--------------------"
-
-        if [[ "${count_crosslto:-0}" != "${count_noc:-0}" ]]; then
-            local winning_profile="crosslto"
-            echo "C/C++ dependencies detected. Restoring staged crosslto binary..."
-            cp -a "$work_dir/stage/"* "$HOME/.cargo/bin/"
-        else
-            local winning_profile="rust"
-            echo "No C/C++ FFI benefits detected. Compiling pure rust profile..."
-            _compile_profile "rust" "" "" "$COMMON_RUSTFLAGS" || return 1
-        fi
-
-        mkdir -p "$cache_dir"
-        echo "$winning_profile" > "$cache_dir/$cache_file_name"
     else
-        echo "Testing incremental cache with noc profile (3s timeout)..."
-        _compile_profile "noc" "" "" "$COMMON_RUSTFLAGS -C linker=clang -C linker-plugin-lto" "3s"
-        case $? in
-            124)
-                echo "Cargo is rebuilding FFI (exceeded 3s)! crosslto takes the crown."
+        echo "No cache found. Initiating FFI probes..."
+        _compile_profile "crosslto" "$COMMON_CFLAGS" "$COMMON_CFLAGS -D_GLIBCXX_ASSERTIONS" "$COMMON_RUSTFLAGS -C linker=clang -C linker-plugin-lto" || return 1
+
+        if [[ "$cargo_cmd" == "install" ]]; then
+            local bin_path=$(cargo install --list 2>/dev/null | awk -v target="$bin_name" -v home="$HOME" '
+                $0 ~ "^" target " v" || index($0, "(" target) {
+                    while (getline > 0 && /^[[:space:]]/) {
+                        binary_path = home "/.cargo/bin/" $1
+                        if (system("test -f \"" binary_path "\"") == 0) print binary_path
+                    }
+                    exit
+                }
+            ')
+            local count_crosslto=$(_krabby_get_count "$bin_path")
+            xargs -d'\n' -r cp -a --target-directory="$work_dir/stage/" <<< "$bin_path"
+
+            _compile_profile "noc" "" "" "$COMMON_RUSTFLAGS -C linker=clang -C linker-plugin-lto"
+            local count_noc=$(_krabby_get_count "$bin_path")
+
+            echo "--- PROBE RESULT ---"
+            echo "crosslto       : ${count_crosslto:-0}"
+            echo "noc (canary)   : ${count_noc:-0}"
+            echo "--------------------"
+
+            if [[ "${count_crosslto:-0}" != "${count_noc:-0}" ]]; then
                 local winning_profile="crosslto"
-                ;;
-            0)
-                echo "Incremental build finished instantly! No FFI flags mattered."
-                _compile_profile "rust" "" "" "$COMMON_RUSTFLAGS" || return 1
+                echo "C/C++ dependencies detected. Restoring staged crosslto binary..."
+                cp -a "$work_dir/stage/"* "$HOME/.cargo/bin/"
+            else
                 local winning_profile="rust"
-                ;;
-            *)
-                echo "Probe failed unexpectedly. Aborting."
-                return 1
-                ;;
-        esac
-        echo "$winning_profile" > .krabby
+                echo "No C/C++ FFI benefits detected. Compiling pure rust profile..."
+                _compile_profile "rust" "" "" "$COMMON_RUSTFLAGS" || return 1
+            fi
+
+            mkdir -p "$cache_dir"
+            echo "$winning_profile" > "$cache_dir/$cache_file_name"
+        else
+            echo "Testing incremental cache with noc profile (3s timeout)..."
+            _compile_profile "noc" "" "" "$COMMON_RUSTFLAGS -C linker=clang -C linker-plugin-lto" "3s"
+            case $? in
+                124)
+                    echo "Cargo is rebuilding FFI (exceeded 3s)! crosslto takes the crown."
+                    local winning_profile="crosslto"
+                    ;;
+                0)
+                    echo "Incremental build finished instantly! No FFI flags mattered."
+                    _compile_profile "rust" "" "" "$COMMON_RUSTFLAGS" || return 1
+                    local winning_profile="rust"
+                    ;;
+                *)
+                    echo "Probe failed unexpectedly. Aborting."
+                    return 1
+                    ;;
+            esac
+            echo "$winning_profile" > .krabby
+        fi
     fi
 }
 
@@ -197,7 +202,7 @@ SUBCOMMANDS:
                 exit 1
             }
             if [[ "$profile" == "crosslto" ]]; then
-                local cflags="$COMMON_CFLAGS" cxxflags="$COMMON_CXXFLAGS" rustflags="$COMMON_RUSTFLAGS -C linker=clang -C linker-plugin-lto"
+                local cflags="$COMMON_CFLAGS" cxxflags="$COMMON_CFLAGS -D_GLIBCXX_ASSERTIONS" rustflags="$COMMON_RUSTFLAGS -C linker=clang -C linker-plugin-lto"
             else
                 local cflags="" cxxflags="" rustflags="$COMMON_RUSTFLAGS"
             fi
@@ -282,14 +287,14 @@ SUBCOMMANDS:
             _krabby_sync "$old_crates_list"
             ;;
         *)
-            [[ -f Cargo.toml ]] || {
+            if [[ -f Cargo.toml ]]; then
+            	_krabby_compile build "--release $*" || {
+                	echo "Build failed!"
+                	exit 1
+            	}
+           	else
                 _krabby_main help
-                exit 0
-            }
-            _krabby_compile build "--release $*" || {
-                echo "Build failed!"
-                exit 1
-            }
+            fi
             ;;
     esac
 }
