@@ -166,19 +166,19 @@ _krabby_main() {
             echo '
 🦀 krabby package manager - Extreme performance cargo wrapper
 
-USAGE:
-  krabby [SUBCOMMAND] [ARGS...]
+Usage:
+  krabby [subcommand] [args...]
+  krabby [flags...]              (Auto-detects Cargo.toml and runs cargo build)
 
-SUBCOMMANDS:
-  install <binary>    Install or compile a crate from crates.io with FFI profiling
-  uninstall <binary>  Uninstall crate
-  inject <prof> <cmd> Execute a command with injected profiles (prof: crosslto or rust)
-  [args...]           Build a local project passing args to cargo build (auto-detects Cargo.toml)
-  update              Upgrade all installed cargo crates
-  list                List all installed cargo binaries
-  hold <binary>       Prevent a package from being updated
-  unhold <binary>     Allow a package to be updated again
-  help, -h            Show this help message
+Subcommands:
+  install <crate>... [flags...]  Install crates from crates.io (or via --git) with FFI profiling
+  uninstall <crate>...           Uninstall crates
+  inject <prof> <cmd>            Execute a command with injected profiles (prof: crosslto or rust)
+  update                         Upgrade all installed cargo crates
+  list                           List all installed cargo binaries
+  hold <crate>...                Prevent a package from being updated
+  unhold <crate>...              Allow a package to be updated again
+  help, -h                       Show this help message
 '
             ;;
         update|upgrade)
@@ -259,7 +259,7 @@ SUBCOMMANDS:
                 fi
             done 
             if [[ ${#bins[@]} -eq 0 ]]; then
-                echo "Error: no crate specified."
+                echo "Usage: krabby install <crate1> <crate2> ... [flags...]"
             else
             	for _bin in "${bins[@]}"; do
                 	if [[ "$_bin" == http*://* ]]; then
@@ -272,8 +272,8 @@ SUBCOMMANDS:
                     	exit 1
                 	}
             	done
-            	_krabby_sync "$old_crates_list"
             fi
+            _krabby_sync "$old_crates_list"
             ;;
         uninstall)
             shift
