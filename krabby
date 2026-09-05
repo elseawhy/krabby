@@ -24,7 +24,6 @@ _krabby_get_count() {
     echo -n "$1" | tr '\n' '\0' | xargs -0 -r objdump -d 2>/dev/null | wc -l
 }
 
-
 _krabby_update() {
     local tmpfile=$(mktemp)
     trap 'rm -f "$tmpfile"' EXIT
