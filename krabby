@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
 
-readonly KRABBY_SYNC_ENABLED=1
 readonly RUST_TARGET="$(rustc -vV | sed -n 's/^host: //p')"
 export LDFLAGS="-march=native -fuse-ld=lld -Wl,-O1,--sort-common,--as-needed,-z,relro,-z,now,-z,pack-relative-relocs,-plugin-opt=O3,-plugin-opt=mcpu=native -flto=full"
 readonly COMMON_CFLAGS="--target=$(clang -print-target-triple) -ffat-lto-objects -march=native -O3 -pipe -fno-plt -fexceptions -Wp,-D_FORTIFY_SOURCE=3 -Wformat -Werror=format-security -fstack-clash-protection -fstack-protector-strong -fcf-protection -flto=full"
@@ -25,13 +24,6 @@ _krabby_get_count() {
     echo -n "$1" | tr '\n' '\0' | xargs -0 -r objdump -d 2>/dev/null | wc -l
 }
 
-_krabby_sync() {
-    (( KRABBY_SYNC_ENABLED )) || return 0
-    local pkglist_file="$HOME/dotfiles/pkglist-cargo.txt" new_crates_list="$(_cargo_list)"
-    [[ "$1" == "$new_crates_list" ]] && return 0
-    mkdir -p "${pkglist_file%/*}"
-    echo "$new_crates_list" > "$pkglist_file"
-}
 
 _krabby_update() {
     local tmpfile=$(mktemp)
@@ -249,7 +241,7 @@ Subcommands:
             ;;
         install)
             shift
-            local old_crates_list="$(_cargo_list)" bins=() flags=() parsing_flags=0 arg _bin
+            local bins=() flags=() parsing_flags=0 arg _bin
             for arg in "$@"; do
                 if (( parsing_flags )) || [[ "$arg" == -* ]]; then
                     parsing_flags=1
@@ -272,16 +264,13 @@ Subcommands:
                     	exit 1
                 	}
             	done
-            	_krabby_sync "$old_crates_list"
             fi
             ;;
         uninstall)
             shift
-            local old_crates_list="$(_cargo_list)"
             for _bin in "$@"; do
                 cargo uninstall "$_bin"
             done
-            _krabby_sync "$old_crates_list"
             ;;
         *)
             if [[ -f Cargo.toml ]]; then
