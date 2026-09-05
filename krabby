@@ -272,8 +272,8 @@ Subcommands:
                     	exit 1
                 	}
             	done
+            	_krabby_sync "$old_crates_list"
             fi
-            _krabby_sync "$old_crates_list"
             ;;
         uninstall)
             shift
