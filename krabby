@@ -249,11 +249,7 @@ SUBCOMMANDS:
             ;;
         install)
             shift
-            [[ -z "${1:-}" ]] && {
-                echo "Error: 'krabby install' requires at least one crate name."
-                exit 1
-            }
-            local old_crates_list="$(_cargo_list)" bins=() flags=() parsing_flags=0 c_arg
+            local old_crates_list="$(_cargo_list)" bins=() flags=() parsing_flags=0 arg _bin
             for arg in "$@"; do
                 if (( parsing_flags )) || [[ "$arg" == -* ]]; then
                     parsing_flags=1
@@ -262,19 +258,22 @@ SUBCOMMANDS:
                     bins+=("$arg")
                 fi
             done 
-            [[ ${#bins[@]} -eq 0 ]] && {
+            if [[ ${#bins[@]} -eq 0 ]]; then
                 echo "Error: no crate specified."
-                exit 1
-            }
-            for _bin in "${bins[@]}"; do
-                c_arg="--force ${flags[*]}"
-                [[ "$_bin" == http*://* ]] && c_arg="--force --git ${flags[*]}"
-                _krabby_compile install "$c_arg" "$_bin" || { 
-                    echo "Install failed for: $_bin"
-                    exit 1
-                }
-            done
-            _krabby_sync "$old_crates_list"
+            else
+            	for _bin in "${bins[@]}"; do
+                	if [[ "$_bin" == http*://* ]]; then
+                		arg="--force ${flags[*]} --git"
+                	else
+                		arg="--force ${flags[*]}"
+                	fi
+                	_krabby_compile install "$arg" "$_bin" || { 
+                    	echo "Install failed for: $_bin"
+                    	exit 1
+                	}
+            	done
+            	_krabby_sync "$old_crates_list"
+            fi
             ;;
         uninstall)
             shift
