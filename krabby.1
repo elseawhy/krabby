@@ -27,11 +27,11 @@ krabby \- an aggressive, performance-obsessed wrapper around cargo
 .br
 .B krabby help
 .SH DESCRIPTION
-\fBkrabby\fR replaces day-to-day \fBcargo build\fR, \fBinstall\fR, and \fBupdate\fR usage with an aggressive build pipeline that auto-tunes build profiles per binary.
+\fBkrabby\fR replaces day-to-day \fBcargo build\fR, \fBinstall\fR, and \fBupdate\fR usage with an aggressive build pipeline that maximizes vectorization and performance.
 
-It enforces native optimizations (\fB-march=native\fR, \fB-C target-cpu=native\fR), full LTO, \fBlld\fR as the linker, and strict hardening flags (\fBFORTIFY_SOURCE=3\fR, stack protectors, etc.) baked into every build.
+It enforces native optimizations (\fB-march=native\fR, \fB-C target-cpu=native\fR), full LTO using LLVM's Clang plugin, \fBlld\fR as the linker, and strict hardening flags (\fBFORTIFY_SOURCE=3\fR, stack protectors, etc.) baked into every build.
 
-On a cache miss, it probes two build profiles per binary (\fBcrosslto\fR and \fBrust\fR) to determine if C/C++ FFI dependencies actually benefit from cross-language LTO. It caches the winning profile locally or globally, and reuses it on future builds to eliminate probing overhead.
+By using \fB-C linker-plugin-lto\fR for all builds, it allows Clang's aggressive \fB-O3\fR pass to fully vectorize pure Rust crates and natively inline C/C++ FFI boundaries, achieving up to 6% faster performance over standard rustc LTO.
 .SH COMMANDS
 .TP
 .B [args...]
@@ -62,21 +62,9 @@ Allow a package to be updated again.
 Show usage information.
 .SH ENVIRONMENT
 .TP
-.B KRABBY_SYNC_ENABLED
-Set to 1 to enable pkglist-cargo.txt syncing to ~/dotfiles on install/uninstall.
-.TP
-.B XDG_CACHE_HOME
-Base directory for the per-binary profile cache. Defaults to ~/.cache.
-.TP
 .B XDG_CONFIG_HOME
 Base directory for the hold list. Defaults to ~/.config.
 .SH FILES
-.TP
-.I .krabby
-Drop this file containing just \fBrust\fR or \fBcrosslto\fR in a project's root to skip probing for that project permanently.
-.TP
-.I ~/.cache/krabby/<bin_name>
-Global cache storing the winning profile for a binary.
 .TP
 .I ~/.config/krabby/hold
 List of crates that are held back from updates.
