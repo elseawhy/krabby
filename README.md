@@ -16,7 +16,7 @@ Built for machines where you're willing to trade portability and compile time fo
   - For `install`, both profiles are compiled and the resulting binaries disassembled to count the total lines of assembly produced. This acts as a universal, cross-platform proxy for whether cross-LTO actually changed codegen (e.g., by successfully inlining C/C++ functions into Rust). Because it simply compares the total size of the disassembled binaries, it works automatically across all architectures (x86_64, AArch64, RISC-V, etc.) without needing hardware-specific heuristics.
   - For `build`, instead of a second full compile, the incremental build is re-run with a 3-second timeout — if cargo rebuilds anything, C/C++ deps are involved and `crosslto` wins. If instruction counts are equal (or the incremental probe finishes instantly), `rust` is used. The winner is cached and all future builds skip straight to it.
 - **Per-binary caching**: winning profiles are stored as individual files under `~/.cache/krabby/<bin_name>` for `install` (e.g. `~/.cache/krabby/ripgrep` contains just `rust` or `crosslto`), or in a local `.krabby` file for project builds — so subsequent builds skip straight to the fast path instead of re-probing.
-- **Crate update checking** (`krabby update`): checks `crates.io` for newer versions of every `cargo install`-ed binary and recompiles anything out of date. Supports holding packages back via `krabby hold`.
+- **Crate update checking** (`krabby update`): checks `crates.io` and Git repositories for newer versions of every `cargo install`-ed binary and recompiles anything out of date. Supports holding packages back via `krabby hold`.
 - **Optional dotfile sync** (`KRABBY_SYNC_ENABLED`): can track the diff of installed cargo binaries into a pkglist file, similar to how Arch users track `pacman` package lists.
 
 ## Requirements
@@ -36,6 +36,7 @@ Built for machines where you're willing to trade portability and compile time fo
 | `lld` | Linker, invoked via `-fuse-ld=lld` in `LDFLAGS` |
 | `objdump` (binutils) | Disassembles built binaries to count SIMD/BMI2 instructions when probing profiles |
 | `curl` | Fetches latest crate versions from crates.io in `krabby update` |
+| `git` | Used to check remote commit hashes for git-installed crates in `krabby update` |
 | `awk` | Version/index parsing in `krabby update` and binary path resolution |
 | `xargs` (findutils) | Copying staged binaries in the probe step |
 | coreutils (`cp`, `rm`, `mkdir`, `mktemp`, `tr`, `timeout`) | General file ops, temp dir management, instruction count filtering, and the 3-second incremental probe timeout |
@@ -70,7 +71,7 @@ chmod +x ~/.local/bin/krabby
 - `krabby install <crate_or_url>... [cargo_flags...]` - Install/compile crates from crates.io or Git repositories (auto-detected via `http(s)://`). Supports multi-binary installs and applies cargo flags (like `--features`) safely across all crates sequentially. Note: `--locked` is automatically enabled.
 - `krabby inject <cmd>` - Execute an arbitrary command with Krabby's aggressive compiler environment variables (`CFLAGS`, `RUSTFLAGS`, etc.) injected.
 - `krabby uninstall <crate>...` - Uninstall one or more crates
-- `krabby update` - Check crates.io and upgrade all installed binaries
+- `krabby update` - Check crates.io and Git repositories and upgrade all installed binaries
 - `krabby list` - List all cargo-installed binaries
 - `krabby hold <crate>...` - Prevent one or more packages from being updated
 - `krabby unhold <crate>...` - Allow a package to be updated again
