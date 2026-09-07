@@ -9,18 +9,12 @@ Built for machines where you're willing to trade portability and compile time fo
 `krabby` is a single Bash script (`_krabby_main`) that replaces day-to-day `cargo build` / `cargo install` / `cargo update` usage with:
 
 - **Native everything**: `-march=native`, `-C target-cpu=native`, full LTO, `lld` as the linker, and hardening flags (`FORTIFY_SOURCE=3`, stack protector, etc.) baked into every build.
-- **Automatic profile selection** (`_krabby_compile`): on a cache miss, probes two build profiles per binary —
-  - `crosslto` — cross-language LTO with clang/llvm-ar/llvm-ranlib as the C/C++ toolchain, useful when a crate has C/C++ FFI dependencies that benefit from being LTO'd together with the Rust code.
-  - `rust` — pure Rust, no C/C++ toolchain involved.
-
-  - For `install`, both profiles are compiled and the resulting binaries disassembled to count the total lines of assembly produced. This acts as a universal, cross-platform proxy for whether cross-LTO actually changed codegen (e.g., by successfully inlining C/C++ functions into Rust). Because it simply compares the total size of the disassembled binaries, it works automatically across all architectures (x86_64, AArch64, RISC-V, etc.) without needing hardware-specific heuristics.
-  - For `build`, instead of a second full compile, the incremental build is re-run with a 3-second timeout — if cargo rebuilds anything, C/C++ deps are involved and `crosslto` wins. If instruction counts are equal (or the incremental probe finishes instantly), `rust` is used. The winner is cached and all future builds skip straight to it.
-- **Per-binary caching**: winning profiles are stored as individual files under `~/.cache/krabby/<bin_name>` for `install` (e.g. `~/.cache/krabby/ripgrep` contains just `rust` or `crosslto`), or in a local `.krabby` file for project builds — so subsequent builds skip straight to the fast path instead of re-probing.
+- **Clang LTO by default**: Instead of letting rustc blindly link standard objects, it forces `linker-plugin-lto` for all builds, handing LLVM bitcode directly to Clang's `-O3` pipeline. This enables aggressive global vectorization and natively inlines C/C++ FFI boundaries, achieving measurable performance gains (up to 6%) even on pure Rust crates.
 - **Crate update checking** (`krabby update`): checks `crates.io` and Git repositories for newer versions of every `cargo install`-ed binary and recompiles anything out of date. Supports holding packages back via `krabby hold`.
 
 ## Requirements
 
-`krabby` targets **Linux** systems. The host target triple is now auto-detected via `rustc -vV` and `clang -print-target-triple`, making the core build pipeline completely portable across architectures (x86_64, AArch64, RISC-V, etc.). The FFI probe heuristic evaluates codegen optimization by comparing the total lines of disassembled assembly produced by both profiles, meaning it automatically adapts to and functions flawlessly on any CPU architecture without requiring hardware-specific adjustments.
+`krabby` targets **Linux** systems. The host target triple is now auto-detected via `rustc -vV` and `clang -print-target-triple`, making the core build pipeline completely portable across architectures (x86_64, AArch64, RISC-V, etc.).
 
 ### Required
 
@@ -33,12 +27,10 @@ Built for machines where you're willing to trade portability and compile time fo
 | `clang` / `clang++` | Used as `CC`/`CXX` for the `crosslto` profile |
 | `llvm-ar`, `llvm-ranlib` | Used as `AR`/`RANLIB` for the `crosslto` profile |
 | `lld` | Linker, invoked via `-fuse-ld=lld` in `LDFLAGS` |
-| `objdump` (binutils) | Disassembles built binaries to count SIMD/BMI2 instructions when probing profiles |
 | `curl` | Fetches latest crate versions from crates.io in `krabby update` |
 | `git` | Used to check remote commit hashes for git-installed crates in `krabby update` |
 | `awk` | Version/index parsing in `krabby update` and binary path resolution |
-| `xargs` (findutils) | Copying staged binaries in the probe step |
-| coreutils (`cp`, `rm`, `mkdir`, `mktemp`, `tr`, `timeout`) | General file ops, temp dir management, instruction count filtering, and the 3-second incremental probe timeout |
+| coreutils (`cp`, `rm`, `mktemp`) | General file ops and temp log management |
 
 ### Optional
 
@@ -48,7 +40,7 @@ Built for machines where you're willing to trade portability and compile time fo
 
 ```bash
 # Install Rust toolchain + build dependencies (Arch or other rolling-release distros)
-sudo pacman -S rust rust-src clang llvm lld binutils curl
+sudo pacman -S rust rust-src clang llvm lld curl
 
 # Install the script
 curl -o ~/.local/bin/krabby https://raw.githubusercontent.com/elseawhy/krabby/refs/heads/main/krabby
@@ -58,7 +50,7 @@ chmod +x ~/.local/bin/krabby
 > **Users on distros without the latest stable Rust** — use [rustup](https://rustup.rs) instead of your distro's Rust package. `apt`/`dnf` often ship outdated stable versions. After installing rustup, add `rust-src` with `rustup component add rust-src`, then install the remaining native dependencies via your package manager:
 > ```bash
 > # Debian/Ubuntu
-> sudo apt install clang llvm-dev lld binutils curl
+> sudo apt install clang llvm-dev lld curl
 > ```
 
 > **`rustup` vs `RUSTC_BOOTSTRAP=1`** — these solve different problems. `rustup` is recommended to ensure you have a *recent* stable `rustc` (distro packages can lag months behind). `RUSTC_BOOTSTRAP=1` is a separate mechanism that coerces any stable `rustc` into accepting nightly-gated flags (`-Z build-std`, `-Zmir-opt-level`, etc.) — no nightly toolchain or `rustup override` is needed for that.
@@ -75,49 +67,17 @@ chmod +x ~/.local/bin/krabby
 - `krabby unhold <crate>...` - Allow a package to be updated again
 - `krabby help` - Show usage
 
-### First build of a crate/project
-
-On a cache miss, `krabby` runs both profiles, disassembles the resulting binaries, and picks a winner:
-
-```
-$ krabby install ripgrep
-Starting Krabby build for: ripgrep (Mode: install)
-No cache found. Initiating FFI probes...
- [-] Compiling profile: [crosslto]...
- [-] Compiling profile: [noc (canary)]...
-─── PROBE RESULT ──────
-crosslto       : 250000
-noc (canary)   : 250000
-───────────────────────
-No C/C++ FFI benefits detected. Compiling pure rust profile...
- [-] Compiling profile: [rust]...
-```
-
-The winning profile is then cached, so the next `krabby install ripgrep` (or rebuild of the same project) skips straight past probing:
-
-```
-$ krabby install ripgrep
-Starting Krabby build for: ripgrep (Mode: install)
-Found global cache: [rust]
-Skipping FFI probes. Fast-tracking...
- [-] Compiling profile: [rust]...
-Final binary built via fast-path [rust].
-```
 
 ## Configuration
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `XDG_CACHE_HOME` | `~/.cache` | Where the per-binary profile cache (`krabby/<bin_name>`) is stored |
 | `XDG_CONFIG_HOME` | `~/.config` | Where the package hold list (`krabby/hold`) is stored |
-
-Per-project overrides: drop a `.krabby` file (containing just `rust` or `crosslto`) in a project's root to skip probing for that project permanently.
 
 ## ⚠️ Caveats
 
 - **Not portable**: binaries built with `-march=native` will only run correctly on the same (or a very similar) CPU. Don't ship these artifacts elsewhere.
 - **Nightly-gated flags via `RUSTC_BOOTSTRAP=1`**: this bypasses the stable/nightly gate, so a plain stable `rustc` (from `pacman`, `apt`, etc.) is sufficient — no `rustup` or nightly toolchain needed. That said, it is inherently fragile across `rustc` versions — expect occasional breakage when Rust changes internals of `-Z build-std` or other unstable flags.
-- Deleting `~/.cache/krabby/<bin_name>` (or the per-project `.krabby`) forces re-probing on the next build.
 
 ## Build Flags Reference
 
@@ -189,13 +149,7 @@ This section documents every flag set by krabby. All flags are applied through e
 ### `RUSTFLAGS` — Rust compiler flags
 
 ```
--C target-cpu=native -C opt-level=3 -Zmir-opt-level=4 -C codegen-units=1 -Z unstable-options -C panic=immediate-abort
-```
-
-Plus, when linked through the `crosslto` profile:
-
-```
--C linker=clang -C linker-plugin-lto
+-C target-cpu=native -C opt-level=3 -Zmir-opt-level=4 -C codegen-units=1 -Z unstable-options -C panic=immediate-abort -C linker=clang -C linker-plugin-lto
 ```
 
 And all `LDFLAGS` are forwarded as `-Clink-arg=<flag>` entries.
@@ -208,19 +162,9 @@ And all `LDFLAGS` are forwarded as `-Clink-arg=<flag>` entries.
 | `-C codegen-units=1` | Compiles the entire crate as a single LLVM module instead of splitting it across parallel codegen units. Allows LLVM to optimize and inline across the entire crate at compile time (even without LTO). Slower to compile but produces better code. |
 | `-Z unstable-options` | Opt-in flag required to unlock certain unstable `rustc` options used elsewhere in the flags (e.g. some `-C` and `-Z` combinations). Requires `RUSTC_BOOTSTRAP=1`. |
 | `-C panic=immediate-abort` | Replaces Rust's panicking machinery (stack unwinding, `PanicInfo` formatting, etc.) with a direct `abort()` call. Eliminates the panic runtime, significantly reducing binary size and removing unwinding overhead. |
-| `-C linker=clang` *(crosslto only)* | Uses `clang` as the linker driver instead of `cc`/`gcc`. Required for cross-language LTO because clang knows how to hand LLVM bitcode from both Rust and C/C++ object files to the LTO backend together. |
-| `-C linker-plugin-lto` *(crosslto only)* | Tells `rustc` to emit LLVM bitcode rather than native object files, and to invoke the LLVM LTO plugin at link time. This is what enables cross-language LTO between Rust and C/C++ — both sides must emit bitcode for the linker to merge and optimize them jointly. |
+| `-C linker=clang` | Uses `clang` as the linker driver instead of `cc`/`gcc`. Required for cross-language LTO because clang knows how to hand LLVM bitcode from both Rust and C/C++ object files to the LTO backend together. |
+| `-C linker-plugin-lto` | Tells `rustc` to emit LLVM bitcode rather than native object files, and to invoke the LLVM LTO plugin at link time. This is what enables cross-language LTO between Rust and C/C++ — both sides must emit bitcode for the linker to merge and optimize them jointly. |
 | `-Clink-arg=<LDFLAGS>` | Each linker flag from `LDFLAGS` is forwarded verbatim to the linker via `rustc`'s `-Clink-arg=` mechanism, since `rustc` drives the linker itself and doesn't read `LDFLAGS` from the environment directly. |
-
----
-
-### Profile summary
-
-| Profile | CFLAGS/CXXFLAGS set? | Extra RUSTFLAGS | When used |
-|---|---|---|---|
-| `crosslto` | ✅ Full flags | `-C linker=clang -C linker-plugin-lto` | Crate has C/C++ deps that benefit from cross-LTO |
-| `rust` | ❌ Not set | — | Pure-Rust crate, no FFI benefit detected |
-| `noc` *(probe only)* | ❌ Not set | `-C linker=clang -C linker-plugin-lto` | Canary build used during FFI detection probing |
 
 ---
 

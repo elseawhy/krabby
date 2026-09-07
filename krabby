@@ -16,8 +16,6 @@ _krabby_spin() {
     wait "$1" 2>/dev/null
 }
 
-
-
 _krabby_update() {
     local tmpfile=$(mktemp)
     trap 'rm -f "$tmpfile"' EXIT
