@@ -164,7 +164,7 @@ Usage:
 Subcommands:
   install <crate>... [flags...]  Install crates from crates.io (or via --git) with FFI profiling
   uninstall <crate>...           Uninstall crates
-  inject <prof> <cmd>            Execute a command with injected profiles (prof: crosslto or rust)
+  inject <cmd>                   Execute a command with crosslto profile injected
   update                         Upgrade all installed cargo crates
   list                           List all installed cargo binaries
   hold <crate>...                Prevent a package from being updated
@@ -179,64 +179,52 @@ Subcommands:
             echo "📦 Installed Cargo Binaries:"
             cargo install --list
             ;;
-        run|env|inject)
+        inject)
             shift
-            local profile="crosslto"
-            if [[ "${1:-}" == "crosslto" || "${1:-}" == "rust" ]]; then
-                profile="$1"
-                shift
-            fi
-            [[ -z "${1:-}" ]] && {
-                echo "Error: 'krabby inject' requires a command to execute."
-                exit 1
-            }
-            if [[ "$profile" == "crosslto" ]]; then
-                local cflags="$COMMON_CFLAGS" cxxflags="$COMMON_CFLAGS -D_GLIBCXX_ASSERTIONS" rustflags="$COMMON_RUSTFLAGS -C linker=clang -C linker-plugin-lto"
+            if [[ -z "${1:-}" ]]; then
+                echo "Usage: krabby inject <cmd>"
             else
-                local cflags="" cxxflags="" rustflags="$COMMON_RUSTFLAGS"
-            fi
-            RUSTC_BOOTSTRAP=1 CC=clang CXX=clang++ AR=llvm-ar RANLIB=llvm-ranlib \
-            CARGO_UNSTABLE_BUILD_STD="std,panic_abort" CARGO_BUILD_TARGET="$RUST_TARGET" \
-            CFLAGS="$cflags" CXXFLAGS="$cxxflags" RUSTFLAGS="$rustflags" \
-            exec "$@"
+            	RUSTC_BOOTSTRAP=1 CC=clang CXX=clang++ AR=llvm-ar RANLIB=llvm-ranlib \
+            	CARGO_UNSTABLE_BUILD_STD="std,panic_abort" CARGO_BUILD_TARGET="$RUST_TARGET" \
+            	CFLAGS="$COMMON_CFLAGS" CXXFLAGS="$COMMON_CFLAGS -D_GLIBCXX_ASSERTIONS" RUSTFLAGS="$COMMON_RUSTFLAGS -C linker=clang -C linker-plugin-lto" \
+            	exec "$@"
+			fi
             ;;
         hold)
             shift
-            [[ -z "${1:-}" ]] && {
-                echo "Error: 'krabby hold' requires a crate name."
-                exit 1
-            }
-            local hold_file="${XDG_CONFIG_HOME:-$HOME/.config}/krabby/hold"
-            mkdir -p "${hold_file%/*}"
-            for _bin in "$@"; do
-                if grep -qxE "$_bin" "$hold_file" 2>/dev/null; then
-                    echo "$_bin is already held."
-                else
-                    echo "$_bin" >> "$hold_file"
-                    echo "Placed $_bin on hold."
-                fi
-            done
+            if [[ -z "${1:-}" ]]; then
+                echo "Usage: krabby hold <crate1> <crate2> ..."
+			else
+            	local hold_file="${XDG_CONFIG_HOME:-$HOME/.config}/krabby/hold"
+            	mkdir -p "${hold_file%/*}"
+            	for _bin in "$@"; do
+                	if grep -qxE "$_bin" "$hold_file" 2>/dev/null; then
+                    	echo "$_bin is already held."
+                	else
+                    	echo "$_bin" >> "$hold_file"
+                    	echo "Placed $_bin on hold."
+                	fi
+            	done
+            fi
             ;;
         unhold)
             shift
-            [[ -z "${1:-}" ]] && {
-                echo "Error: 'krabby unhold' requires a crate name."
-                exit 1
-            }
             local hold_file="${XDG_CONFIG_HOME:-$HOME/.config}/krabby/hold"
-            [[ ! -f "$hold_file" ]] && {
+            if [[ -z "${1:-}" ]]; then
+                echo "Usage: krabby unhold <crate1> <crate2> ..."
+            elif [[ ! -f "$hold_file" ]]; then
                 echo "Hold list is empty."
-                exit 0
-            }
-            for _bin in "$@"; do
-                if grep -qxE "$_bin" "$hold_file" 2>/dev/null; then
-                    grep -vxE "$_bin" "$hold_file" > "${hold_file}.tmp"
-                    mv "${hold_file}.tmp" "$hold_file"
-                    echo "Removed hold on $_bin."
-                else
-                    echo "$_bin is not held."
-                fi
-            done
+			else
+            	for _bin in "$@"; do
+                	if grep -qxE "$_bin" "$hold_file" 2>/dev/null; then
+                    	grep -vxE "$_bin" "$hold_file" > "${hold_file}.tmp"
+                    	mv "${hold_file}.tmp" "$hold_file"
+                    	echo "Removed hold on $_bin."
+                	else
+                    	echo "$_bin is not held."
+                	fi
+            	done
+            fi
             ;;
         install)
             shift
@@ -267,9 +255,13 @@ Subcommands:
             ;;
         uninstall)
             shift
-            for _bin in "$@"; do
-                cargo uninstall "$_bin"
-            done
+            if [[ -z "${1:-}" ]]; then
+                echo "Usage: krabby uninstall <crate1> <crate2> ..."
+            else
+            	for _bin in "$@"; do
+                	cargo uninstall "$_bin"
+            	done
+            fi
             ;;
         *)
             if [[ -f Cargo.toml ]]; then
