@@ -10,11 +10,10 @@ krabby \- an aggressive, performance-obsessed wrapper around cargo
 .RI [ cargo_flags... ]
 .br
 .B krabby inject
-.RI [ profile ]
 .IR cmd
 .br
 .B krabby uninstall
-.IR crate
+.IR crate...
 .br
 .B krabby update
 .br
@@ -41,11 +40,11 @@ Build the local project (auto-detects Cargo.toml). Arguments are passed directly
 .B install \fIcrate_or_url...\fR \fI[cargo_flags...]\fR
 Install or compile crates from crates.io or Git repositories. Supports multi-binary installs and applies cargo flags sequentially. Note: \fB--locked\fR is automatically enabled.
 .TP
-.B inject \fI[profile]\fR \fIcmd\fR
-Execute an arbitrary command with Krabby's aggressive compiler environment variables injected. The profile defaults to \fBcrosslto\fR but can be explicitly set to \fBrust\fR.
+.B inject \fIcmd\fR
+Execute an arbitrary command with Krabby's aggressive compiler environment variables injected.
 .TP
-.B uninstall \fIcrate\fR
-Uninstall a cargo crate.
+.B uninstall \fIcrate...\fR
+Uninstall one or more cargo crates.
 .TP
 .B update
 Check crates.io and upgrade all installed binaries.
