@@ -4,7 +4,7 @@ readonly KRABBY_SYNC_ENABLED=1
 readonly RUST_TARGET="$(rustc -vV | sed -n 's/^host: //p')"
 export LDFLAGS="-march=native -fuse-ld=lld -Wl,-O1,--sort-common,--as-needed,-z,relro,-z,now,-z,pack-relative-relocs,-plugin-opt=O3,-plugin-opt=mcpu=native -flto=full"
 readonly COMMON_CFLAGS="--target=$(clang -print-target-triple) -ffat-lto-objects -march=native -O3 -pipe -fno-plt -fexceptions -Wp,-D_FORTIFY_SOURCE=3 -Wformat -Werror=format-security -fstack-clash-protection -fstack-protector-strong -fcf-protection -flto=full"
-readonly COMMON_RUSTFLAGS="-C target-cpu=native -C opt-level=3 -Zmir-opt-level=4 -C codegen-units=1 -Z unstable-options -C panic=immediate-abort${LDFLAGS:+ -Clink-arg=${LDFLAGS// / -Clink-arg=}}"
+readonly COMMON_RUSTFLAGS="-C target-cpu=native -C opt-level=3 -Zmir-opt-level=4 -C codegen-units=1 -C linker=clang -C linker-plugin-lto -Z unstable-options -C panic=immediate-abort${LDFLAGS:+ -Clink-arg=${LDFLAGS// / -Clink-arg=}}"
 
 _krabby_spin() {
     local spinstr='-\|/'
@@ -66,11 +66,12 @@ _krabby_update() {
 
     	while read -r pkg_type crate_name old_version new_version url; do
             if [[ "$pkg_type" == "git" ]]; then
-                _krabby_compile install "--force --git $url" "$crate_name" || echo "Failed to compile $crate_name"
+                _krabby_compile install "--force --git $url" "$crate_name" || echo "⚠️  Failed to compile $crate_name"
             else
-        	    _krabby_compile install "--force" "$crate_name" || echo "Failed to compile $crate_name"
+        	    _krabby_compile install "--force" "$crate_name" || echo "⚠️  Failed to compile $crate_name"
             fi
     	done < "$tmpfile"
+    	echo -e "\n🎉 All updates finished!"
     else
     	echo "😴 All installed crates are up to date."
 	fi
@@ -81,16 +82,16 @@ _krabby_compile() {
     trap 'rm -f "$build_log" 2>/dev/null' RETURN
     trap 'rm -f "$build_log" 2>/dev/null; exit 130' INT TERM
 
-    echo -e "\nStarting Krabby build ($1): ${bin_name:-local project}"
-
-    RUSTC_BOOTSTRAP=1 CC=clang CXX=clang++ AR=llvm-ar RANLIB=llvm-ranlib CFLAGS="$COMMON_CFLAGS" CXXFLAGS="$COMMON_CFLAGS -D_GLIBCXX_ASSERTIONS" RUSTFLAGS="$COMMON_RUSTFLAGS -C linker=clang -C linker-plugin-lto" \
+    RUSTC_BOOTSTRAP=1 CC=clang CXX=clang++ AR=llvm-ar RANLIB=llvm-ranlib CFLAGS="$COMMON_CFLAGS" CXXFLAGS="$COMMON_CFLAGS -D_GLIBCXX_ASSERTIONS" RUSTFLAGS="$COMMON_RUSTFLAGS" CARGO_PROFILE_RELEASE_LTO=true \
     cargo "$1" --target "$RUST_TARGET" -Z build-std=std,panic_abort --locked --quiet $2 ${3:+"$3"} > "$build_log" 2>&1 &
     
-    _krabby_spin "$!" "Compiling ${bin_name:-project}..." || {
-        echo "Build failed!"
+    if _krabby_spin "$!" "Compiling ${bin_name:-project}..."; then
+        echo "✅ Successfully built ${bin_name:-local project}"
+    else
+        echo "❌ Build failed for ${bin_name:-local project}!"
         cat "$build_log"
         return 1
-    }
+    fi
 }
 
 _krabby_main() {
@@ -192,11 +193,12 @@ Subcommands:
                 		arg="--force ${flags[*]}"
                 	fi
                 	_krabby_compile install "$arg" "$_bin" || { 
-                    	echo "Install failed for: $_bin"
+                    	echo "❌ Install failed for: $_bin"
                     	exit 1
                 	}
             	done
             	_krabby_sync "$old_crates_list"
+                echo -e "\n🎉 All installations finished!"
             fi
             ;;
         uninstall)
