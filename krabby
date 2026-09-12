@@ -212,10 +212,7 @@ Subcommands:
             ;;
         *)
             if [[ -f Cargo.toml ]]; then
-            	_krabby_compile build "--release $*" || {
-                	echo "Build failed!"
-                	exit 1
-            	}
+            	_krabby_compile build "--release $*" || exit 1
            	else
                 _krabby_main help
             fi
