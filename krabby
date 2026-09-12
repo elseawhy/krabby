@@ -66,9 +66,9 @@ _krabby_update() {
 
     	while read -r pkg_type crate_name old_version new_version url; do
             if [[ "$pkg_type" == "git" ]]; then
-                _krabby_compile install "--force --git $url" "$crate_name" || echo "⚠️  Failed to compile $crate_name"
+                _krabby_compile install "--force --git $url" "$crate_name"
             else
-        	    _krabby_compile install "--force" "$crate_name" || echo "⚠️  Failed to compile $crate_name"
+        	    _krabby_compile install "--force" "$crate_name"
             fi
     	done < "$tmpfile"
     	echo -e "\n🎉 All updates finished!"
@@ -192,10 +192,7 @@ Subcommands:
                 	else
                 		arg="--force ${flags[*]}"
                 	fi
-                	_krabby_compile install "$arg" "$_bin" || { 
-                    	echo "❌ Install failed for: $_bin"
-                    	exit 1
-                	}
+                	_krabby_compile install "$arg" "$_bin" || exit 1
             	done
             	_krabby_sync "$old_crates_list"
                 echo -e "\n🎉 All installations finished!"
