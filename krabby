@@ -214,9 +214,7 @@ Subcommands:
             }
             local old_crates_list="$(_cargo_list)"
             cargo "$@"
-            local status=$?
             _krabby_sync "$old_crates_list"
-            exit $status
             ;;
         *)
             [[ ! -f Cargo.toml ]] && {
