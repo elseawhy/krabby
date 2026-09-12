@@ -53,9 +53,9 @@ _krabby_update() {
 
     	while read -r pkg_type crate_name old_version new_version url; do
             if [[ "$pkg_type" == "git" ]]; then
-                _krabby_compile install "--force --git $url" "$crate_name" || echo "⚠️  Failed to compile $crate_name"
+                _krabby_compile install "--force --git $url" "$crate_name"
             else
-        	    _krabby_compile install "--force" "$crate_name" || echo "⚠️  Failed to compile $crate_name"
+        	    _krabby_compile install "--force" "$crate_name"
             fi
     	done < "$tmpfile"
     	echo -e "\n🎉 All updates finished!"
@@ -65,18 +65,18 @@ _krabby_update() {
 }
 
 _krabby_compile() {
-    local bin_name="${3%@*}" build_log=$(mktemp)
-    trap 'rm -f "$build_log" 2>/dev/null' RETURN
-    trap 'rm -f "$build_log" 2>/dev/null; exit 130' INT TERM
+    local bin_name="${3%@*}"
 
-    RUSTC_BOOTSTRAP=1 CC=clang CXX=clang++ AR=llvm-ar RANLIB=llvm-ranlib CFLAGS="$COMMON_CFLAGS" CXXFLAGS="$COMMON_CFLAGS -D_GLIBCXX_ASSERTIONS" RUSTFLAGS="$COMMON_RUSTFLAGS" CARGO_PROFILE_RELEASE_LTO=true \
-    cargo "$1" --target "$RUST_TARGET" -Z build-std=std,panic_abort --locked --quiet $2 ${3:+"$3"} > "$build_log" 2>&1 &
+    exec 3< <(RUSTC_BOOTSTRAP=1 CC=clang CXX=clang++ AR=llvm-ar RANLIB=llvm-ranlib CFLAGS="$COMMON_CFLAGS" CXXFLAGS="$COMMON_CFLAGS -D_GLIBCXX_ASSERTIONS" RUSTFLAGS="$COMMON_RUSTFLAGS" CARGO_PROFILE_RELEASE_LTO=true \
+    cargo "$1" --target "$RUST_TARGET" -Z build-std=std,panic_abort --locked --quiet $2 ${3:+"$3"} 2>&1)
     
     if _krabby_spin "$!" "Compiling ${bin_name:-project}..."; then
         echo "✅ Successfully built ${bin_name:-local project}"
+        exec 3<&-
     else
         echo "❌ Build failed for ${bin_name:-local project}!"
-        cat "$build_log"
+        cat <&3
+        exec 3<&-
         return 1
     fi
 }
@@ -179,10 +179,7 @@ Subcommands:
                 	else
                 		arg="--force ${flags[*]}"
                 	fi
-                	_krabby_compile install "$arg" "$_bin" || { 
-                    	echo "❌ Install failed for: $_bin"
-                    	exit 1
-                	}
+                	_krabby_compile install "$arg" "$_bin" || exit 1
             	done
                 echo -e "\n🎉 All installations finished!"
             fi
@@ -199,10 +196,7 @@ Subcommands:
             ;;
         *)
             if [[ -f Cargo.toml ]]; then
-            	_krabby_compile build "--release $*" || {
-                	echo "Build failed!"
-                	exit 1
-            	}
+            	_krabby_compile build "--release $*" || exit 1
            	else
                 _krabby_main help
             fi
