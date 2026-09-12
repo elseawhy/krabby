@@ -93,7 +93,6 @@ Usage:
 
 Subcommands:
   install <crate>... [flags...]  Install crates from crates.io (or via --git) with FFI profiling
-  uninstall <crate>...           Uninstall crates
   inject <cmd>                   Execute a command with crosslto profile injected
   update                         Upgrade all installed cargo crates
   list                           List all installed cargo binaries
@@ -182,16 +181,6 @@ Subcommands:
                 	_krabby_compile install "$arg" "$_bin" || exit 1
             	done
                 echo -e "\n🎉 All installations finished!"
-            fi
-            ;;
-        uninstall)
-            shift
-            if [[ -z "${1:-}" ]]; then
-                echo "Usage: krabby uninstall <crate1> <crate2> ..."
-            else
-            	for _bin in "$@"; do
-                	cargo uninstall "$_bin"
-            	done
             fi
             ;;
         *)
