@@ -208,8 +208,15 @@ Subcommands:
             echo -e "\n🎉 All installations finished!"
             ;;
         uninstall)
+            shift
+            [[ -z "${1:-}" ]] && {
+                echo "Usage: krabby uninstall <crate1> <crate2> ..."
+                exit 1
+            }
             local old_crates_list="$(_cargo_list)"
-            cargo "$@"
+            for _bin in "$@"; do
+                cargo uninstall "$_bin"
+            done
             _krabby_sync "$old_crates_list"
             ;;
         *)
