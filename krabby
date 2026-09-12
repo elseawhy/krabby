@@ -124,38 +124,40 @@ Subcommands:
             ;;
         inject)
             shift
-            if [[ -z "${1:-}" ]]; then
+            [[ -z "${1:-}" ]] && {
                 echo "Usage: krabby inject <cmd>"
-            else
-            	RUSTC_BOOTSTRAP=1 CC=clang CXX=clang++ AR=llvm-ar RANLIB=llvm-ranlib \
-            	CARGO_UNSTABLE_BUILD_STD="std,panic_abort" CARGO_BUILD_TARGET="$RUST_TARGET" \
-            	CFLAGS="$COMMON_CFLAGS" CXXFLAGS="$COMMON_CFLAGS -D_GLIBCXX_ASSERTIONS" RUSTFLAGS="$COMMON_RUSTFLAGS -C linker=clang -C linker-plugin-lto" \
-            	exec "$@"
-			fi
+                exit 1
+            }
+            RUSTC_BOOTSTRAP=1 CC=clang CXX=clang++ AR=llvm-ar RANLIB=llvm-ranlib \
+            CARGO_UNSTABLE_BUILD_STD="std,panic_abort" CARGO_BUILD_TARGET="$RUST_TARGET" \
+            CFLAGS="$COMMON_CFLAGS" CXXFLAGS="$COMMON_CFLAGS -D_GLIBCXX_ASSERTIONS" RUSTFLAGS="$COMMON_RUSTFLAGS -C linker=clang -C linker-plugin-lto" \
+            exec "$@"
             ;;
         hold)
             shift
-            if [[ -z "${1:-}" ]]; then
+            [[ -z "${1:-}" ]] && {
                 echo "Usage: krabby hold <crate1> <crate2> ..."
-			else
-            	local hold_file="${XDG_CONFIG_HOME:-$HOME/.config}/krabby/hold"
-            	mkdir -p "${hold_file%/*}"
-            	for _bin in "$@"; do
-                	if grep -qxE "$_bin" "$hold_file" 2>/dev/null; then
-                    	echo "$_bin is already held."
-                	else
-                    	echo "$_bin" >> "$hold_file"
-                    	echo "Placed $_bin on hold."
-                	fi
-            	done
-            fi
+				exit 1
+			}
+            local hold_file="${XDG_CONFIG_HOME:-$HOME/.config}/krabby/hold"
+            mkdir -p "${hold_file%/*}"
+            for _bin in "$@"; do
+                if grep -qxE "$_bin" "$hold_file" 2>/dev/null; then
+                    echo "$_bin is already held."
+                else
+                    echo "$_bin" >> "$hold_file"
+                    echo "Placed $_bin on hold."
+                fi
+            done
             ;;
         unhold)
             shift
-            local hold_file="${XDG_CONFIG_HOME:-$HOME/.config}/krabby/hold"
-            if [[ -z "${1:-}" ]]; then
+            [[ -z "${1:-}" ]] && {
                 echo "Usage: krabby unhold <crate1> <crate2> ..."
-            elif [[ ! -f "$hold_file" ]]; then
+                exit 1
+            }
+            local hold_file="${XDG_CONFIG_HOME:-$HOME/.config}/krabby/hold"
+            if [[ ! -f "$hold_file" ]]; then
                 echo "Hold list is empty."
 			else
             	for _bin in "$@"; do
@@ -180,42 +182,35 @@ Subcommands:
                     bins+=("$arg")
                 fi
             done 
-            if [[ ${#bins[@]} -eq 0 ]]; then
+            [[ ${#bins[@]} -eq 0 ]] && {
                 echo "Usage: krabby install <crate1> <crate2> ... [flags...]"
-            else
-            	for _bin in "${bins[@]}"; do
-                	if [[ "$_bin" == http*://* ]]; then
-                        local crate_name="${_bin##*/}"
-                        crate_name="${crate_name%.git}"
-                		arg="--force ${flags[*]} --git $_bin"
-                        _bin="$crate_name"
-                	else
-                		arg="--force ${flags[*]}"
-                	fi
-                	_krabby_compile install "$arg" "$_bin" || exit 1
-            	done
-            	_krabby_sync "$old_crates_list"
-                echo -e "\n🎉 All installations finished!"
-            fi
+				exit 1
+            }
+            for _bin in "${bins[@]}"; do
+                if [[ "$_bin" == http*://* ]]; then
+                    local crate_name="${_bin##*/}"
+                    crate_name="${crate_name%.git}"
+                	arg="--force ${flags[*]} --git $_bin"
+                    _bin="$crate_name"
+                else
+                	arg="--force ${flags[*]}"
+                fi
+                _krabby_compile install "$arg" "$_bin" || exit 1
+            done
+            _krabby_sync "$old_crates_list"
+            echo -e "\n🎉 All installations finished!"
             ;;
         uninstall)
-            shift
-            if [[ -z "${1:-}" ]]; then
-                echo "Usage: krabby uninstall <crate1> <crate2> ..."
-            else
-            	local old_crates_list="$(_cargo_list)"
-            	for _bin in "$@"; do
-                	cargo uninstall "$_bin"
-            	done
-            	_krabby_sync "$old_crates_list"
-            fi
+            local old_crates_list="$(_cargo_list)"
+            cargo "$@"
+            _krabby_sync "$old_crates_list"
             ;;
         *)
-            if [[ -f Cargo.toml ]]; then
-            	_krabby_compile build "--release $*" || exit 1
-           	else
-                _krabby_main help
-            fi
+            [[ ! -f Cargo.toml ]] && {
+            	_krabby_main help
+            	exit 1
+            }
+            _krabby_compile build "--release $*" || exit 1
             ;;
     esac
 }
