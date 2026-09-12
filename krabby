@@ -64,14 +64,21 @@ _krabby_update() {
     	awk '{print "  - " $2 ": " $3 " -> " $4}' "$tmpfile"
     	read -rp $'\n🚀 Proceed with upgrade? [Enter to confirm, Ctrl+C to abort] '
 
+        local failures=0
     	while read -r pkg_type crate_name old_version new_version url; do
             if [[ "$pkg_type" == "git" ]]; then
-                _krabby_compile install "--force --git $url" "$crate_name"
+                _krabby_compile install "--force --git $url" "$crate_name" || ((failures++))
             else
-        	    _krabby_compile install "--force" "$crate_name"
+        	    _krabby_compile install "--force" "$crate_name" || ((failures++))
             fi
     	done < "$tmpfile"
-    	echo -e "\n🎉 All updates finished!"
+        
+        if (( failures > 0 )); then
+            echo -e "\n⚠️  Finished updates with $failures error(s)!"
+            return 1
+        else
+            echo -e "\n🎉 All updates finished successfully!"
+        fi
     else
     	echo "😴 All installed crates are up to date."
 	fi
