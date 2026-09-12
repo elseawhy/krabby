@@ -3,7 +3,7 @@
 readonly RUST_TARGET="$(rustc -vV | sed -n 's/^host: //p')"
 export LDFLAGS="-march=native -fuse-ld=lld -Wl,-O1,--sort-common,--as-needed,-z,relro,-z,now,-z,pack-relative-relocs,-plugin-opt=O3,-plugin-opt=mcpu=native -flto=full"
 readonly COMMON_CFLAGS="--target=$(clang -print-target-triple) -ffat-lto-objects -march=native -O3 -pipe -fno-plt -fexceptions -Wp,-D_FORTIFY_SOURCE=3 -Wformat -Werror=format-security -fstack-clash-protection -fstack-protector-strong -fcf-protection -flto=full"
-readonly COMMON_RUSTFLAGS="-C target-cpu=native -C opt-level=3 -Zmir-opt-level=4 -C codegen-units=1 -Z unstable-options -C panic=immediate-abort${LDFLAGS:+ -Clink-arg=${LDFLAGS// / -Clink-arg=}}"
+readonly COMMON_RUSTFLAGS="-C target-cpu=native -C opt-level=3 -Zmir-opt-level=4 -C codegen-units=1 -C linker=clang -C linker-plugin-lto -Z unstable-options -C panic=immediate-abort${LDFLAGS:+ -Clink-arg=${LDFLAGS// / -Clink-arg=}}"
 
 _krabby_spin() {
     local spinstr='-\|/'
@@ -69,7 +69,7 @@ _krabby_compile() {
     trap 'rm -f "$build_log" 2>/dev/null' RETURN
     trap 'rm -f "$build_log" 2>/dev/null; exit 130' INT TERM
 
-    RUSTC_BOOTSTRAP=1 CC=clang CXX=clang++ AR=llvm-ar RANLIB=llvm-ranlib CFLAGS="$COMMON_CFLAGS" CXXFLAGS="$COMMON_CFLAGS -D_GLIBCXX_ASSERTIONS" RUSTFLAGS="$COMMON_RUSTFLAGS -C linker=clang -C linker-plugin-lto" \
+    RUSTC_BOOTSTRAP=1 CC=clang CXX=clang++ AR=llvm-ar RANLIB=llvm-ranlib CFLAGS="$COMMON_CFLAGS" CXXFLAGS="$COMMON_CFLAGS -D_GLIBCXX_ASSERTIONS" RUSTFLAGS="$COMMON_RUSTFLAGS" CARGO_PROFILE_RELEASE_LTO=true \
     cargo "$1" --target "$RUST_TARGET" -Z build-std=std,panic_abort --locked --quiet $2 ${3:+"$3"} > "$build_log" 2>&1 &
     
     if _krabby_spin "$!" "Compiling ${bin_name:-project}..."; then
@@ -116,7 +116,7 @@ Subcommands:
             else
             	RUSTC_BOOTSTRAP=1 CC=clang CXX=clang++ AR=llvm-ar RANLIB=llvm-ranlib \
             	CARGO_UNSTABLE_BUILD_STD="std,panic_abort" CARGO_BUILD_TARGET="$RUST_TARGET" \
-            	CFLAGS="$COMMON_CFLAGS" CXXFLAGS="$COMMON_CFLAGS -D_GLIBCXX_ASSERTIONS" RUSTFLAGS="$COMMON_RUSTFLAGS -C linker=clang -C linker-plugin-lto" \
+            	CFLAGS="$COMMON_CFLAGS" CXXFLAGS="$COMMON_CFLAGS -D_GLIBCXX_ASSERTIONS" RUSTFLAGS="$COMMON_RUSTFLAGS" \
             	exec "$@"
 			fi
             ;;
