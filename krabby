@@ -53,11 +53,12 @@ _krabby_update() {
 
     	while read -r pkg_type crate_name old_version new_version url; do
             if [[ "$pkg_type" == "git" ]]; then
-                _krabby_compile install "--force --git $url" "$crate_name" || echo "Failed to compile $crate_name"
+                _krabby_compile install "--force --git $url" "$crate_name" || echo "⚠️  Failed to compile $crate_name"
             else
-        	    _krabby_compile install "--force" "$crate_name" || echo "Failed to compile $crate_name"
+        	    _krabby_compile install "--force" "$crate_name" || echo "⚠️  Failed to compile $crate_name"
             fi
     	done < "$tmpfile"
+    	echo -e "\n🎉 All updates finished!"
     else
     	echo "😴 All installed crates are up to date."
 	fi
@@ -68,16 +69,16 @@ _krabby_compile() {
     trap 'rm -f "$build_log" 2>/dev/null' RETURN
     trap 'rm -f "$build_log" 2>/dev/null; exit 130' INT TERM
 
-    echo -e "\nStarting Krabby build ($1): ${bin_name:-local project}"
-
     RUSTC_BOOTSTRAP=1 CC=clang CXX=clang++ AR=llvm-ar RANLIB=llvm-ranlib CFLAGS="$COMMON_CFLAGS" CXXFLAGS="$COMMON_CFLAGS -D_GLIBCXX_ASSERTIONS" RUSTFLAGS="$COMMON_RUSTFLAGS -C linker=clang -C linker-plugin-lto" \
     cargo "$1" --target "$RUST_TARGET" -Z build-std=std,panic_abort --locked --quiet $2 ${3:+"$3"} > "$build_log" 2>&1 &
     
-    _krabby_spin "$!" "Compiling ${bin_name:-project}..." || {
-        echo "Build failed!"
+    if _krabby_spin "$!" "Compiling ${bin_name:-project}..."; then
+        echo "✅ Successfully built ${bin_name:-local project}"
+    else
+        echo "❌ Build failed for ${bin_name:-local project}!"
         cat "$build_log"
         return 1
-    }
+    fi
 }
 
 _krabby_main() {
@@ -179,10 +180,11 @@ Subcommands:
                 		arg="--force ${flags[*]}"
                 	fi
                 	_krabby_compile install "$arg" "$_bin" || { 
-                    	echo "Install failed for: $_bin"
+                    	echo "❌ Install failed for: $_bin"
                     	exit 1
                 	}
             	done
+                echo -e "\n🎉 All installations finished!"
             fi
             ;;
         uninstall)
