@@ -73,6 +73,84 @@ chmod +x ~/.local/bin/krabby
 |---|---|---|
 | `XDG_CONFIG_HOME` | `~/.config` | Where the package hold list (`krabby/hold`) is stored |
 
+## Benchmarks
+
+This section demonstrates the real-world performance and binary size gains achieved by `krabby`'s aggressive compilation pipeline compared to pre-compiled binaries shipped by performance-oriented Linux distributions (like CachyOS).
+
+### `vivid` (Theme Generator for `ls`)
+
+Tested on a 10,000-run `hyperfine` benchmark generating a custom theme using `vivid v0.11.1`. The "Standard" binary was installed directly from the `cachyos-extra-v3` repository (which is already heavily optimized for `x86-64-v3`), making `krabby`'s additional gains even more notable.
+
+#### Binary Size (36% Smaller)
+- **Standard (`cachyos-extra-v3`)**: `955 KB`
+- **Krabby (`krabby install vivid --git https://github.com/sharkdp/vivid`)**: `612 KB`
+
+#### Execution Speed (~7% Faster)
+```console
+❯ hyperfine -r 10000 "/usr/bin/vivid generate custom" "~/.cargo/bin/vivid generate custom"
+Benchmark 1: /usr/bin/vivid generate custom
+  Time (mean ± σ):       1.6 ms ±   0.4 ms    [User: 1.2 ms, System: 0.5 ms]
+  Range (min … max):     1.3 ms …   6.5 ms    10000 runs
+ 
+Benchmark 2: ~/.cargo/bin/vivid generate custom
+  Time (mean ± σ):       1.5 ms ±   0.3 ms    [User: 1.2 ms, System: 0.5 ms]
+  Range (min … max):     1.2 ms …   6.0 ms    10000 runs
+ 
+Summary
+  ~/.cargo/bin/vivid generate custom ran
+    1.07 ± 0.33 times faster than /usr/bin/vivid generate custom
+```
+
+### `eza` (Modern `ls` replacement)
+
+Tested on a 10,000-run `hyperfine` benchmark listing `/usr/lib` (`eza -la /usr/lib`), which forces massive amounts of string formatting and syscalls. The "Standard" binary is from `cachyos-extra-v3`.
+
+#### Binary Size (11% Smaller)
+- **Standard (`cachyos-extra-v3`)**: `1.8 MB`
+- **Krabby (`krabby install eza`)**: `1.6 MB`
+
+#### Execution Speed
+Since this test is overwhelmingly bottlenecked by the kernel's I/O and `stat` calls, execution times are nearly identical. However, `krabby` still managed to pull ahead slightly while maintaining a much tighter maximum latency variance.
+
+```console
+❯ hyperfine -r 10000 "/usr/bin/eza -la /usr/lib" "~/.cargo/bin/eza -la /usr/lib"
+Benchmark 1: /usr/bin/eza -la /usr/lib
+  Time (mean ± σ):      27.7 ms ±   2.1 ms    [User: 30.1 ms, System: 32.7 ms]
+  Range (min … max):    24.6 ms …  45.9 ms    10000 runs
+ 
+Benchmark 2: ~/.cargo/bin/eza -la /usr/lib
+  Time (mean ± σ):      27.6 ms ±   1.7 ms    [User: 30.0 ms, System: 32.9 ms]
+  Range (min … max):    24.6 ms …  38.2 ms    10000 runs
+ 
+Summary
+  ~/.cargo/bin/eza -la /usr/lib ran
+    1.01 ± 0.10 times faster than /usr/bin/eza -la /usr/lib
+```
+
+### `cargo` (Dependency Resolution)
+
+Tested on a 500-run `hyperfine` benchmark generating a lockfile from scratch for a workspace with ~280 dependencies (`cargo generate-lockfile`). The benchmark was run with `--offline` to ensure the results measured pure CPU graph traversal and manifest parsing without being skewed by network jitter. The "Standard" binary is from `cachyos-extra-v3` (`rust`).
+
+#### Binary Size (4% Smaller)
+- **Standard (`cachyos-extra-v3`)**: `25 MB`
+- **Krabby (`krabby install cargo`)**: `24 MB`
+
+#### Execution Speed (~6% Faster)
+```console
+❯ hyperfine -r 500 --prepare "rm -f Cargo.lock" "/usr/bin/cargo generate-lockfile --offline" "~/.cargo/bin/cargo generate-lockfile --offline"
+Benchmark 1: /usr/bin/cargo generate-lockfile --offline
+  Time (mean ± σ):     228.0 ms ±   8.0 ms    [User: 171.6 ms, System: 55.6 ms]
+  Range (min … max):   218.5 ms … 315.9 ms    500 runs
+ 
+Benchmark 2: ~/.cargo/bin/cargo generate-lockfile --offline
+  Time (mean ± σ):     214.3 ms ±   3.4 ms    [User: 158.1 ms, System: 55.3 ms]
+  Range (min … max):   207.9 ms … 230.8 ms    500 runs
+ 
+Summary
+  ~/.cargo/bin/cargo generate-lockfile --offline ran
+    1.06 ± 0.04 times faster than /usr/bin/cargo generate-lockfile --offline
+```
+
 ## ⚠️ Caveats
 
 - **Not portable**: binaries built with `-march=native` will only run correctly on the same (or a very similar) CPU. Don't ship these artifacts elsewhere.
