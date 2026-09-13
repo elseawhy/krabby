@@ -102,6 +102,32 @@ Summary
     1.07 ± 0.33 times faster than /usr/bin/vivid generate custom
 ```
 
+### `eza` (Modern `ls` replacement)
+
+Tested on a 10,000-run `hyperfine` benchmark listing `/usr/lib` (`eza -la /usr/lib`), which forces massive amounts of string formatting and syscalls. The "Standard" binary is from `cachyos-extra-v3`.
+
+#### Binary Size (11% Smaller)
+- **Standard (`cachyos-extra-v3`)**: `1.8 MB`
+- **Krabby (`krabby install eza`)**: `1.6 MB`
+
+#### Execution Speed
+Since this test is overwhelmingly bottlenecked by the kernel's I/O and `stat` calls, execution times are nearly identical. However, `krabby` still managed to pull ahead slightly while maintaining a much tighter maximum latency variance.
+
+```console
+❯ hyperfine -r 10000 "/usr/bin/eza -la /usr/lib" "~/.cargo/bin/eza -la /usr/lib"
+Benchmark 1: /usr/bin/eza -la /usr/lib
+  Time (mean ± σ):      27.7 ms ±   2.1 ms    [User: 30.1 ms, System: 32.7 ms]
+  Range (min … max):    24.6 ms …  45.9 ms    10000 runs
+ 
+Benchmark 2: ~/.cargo/bin/eza -la /usr/lib
+  Time (mean ± σ):      27.6 ms ±   1.7 ms    [User: 30.0 ms, System: 32.9 ms]
+  Range (min … max):    24.6 ms …  38.2 ms    10000 runs
+ 
+Summary
+  ~/.cargo/bin/eza -la /usr/lib ran
+    1.01 ± 0.10 times faster than /usr/bin/eza -la /usr/lib
+```
+
 ## ⚠️ Caveats
 
 - **Not portable**: binaries built with `-march=native` will only run correctly on the same (or a very similar) CPU. Don't ship these artifacts elsewhere.
