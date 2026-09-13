@@ -74,6 +74,34 @@ chmod +x ~/.local/bin/krabby
 |---|---|---|
 | `XDG_CONFIG_HOME` | `~/.config` | Where the package hold list (`krabby/hold`) is stored |
 
+## Benchmarks
+
+This section demonstrates the real-world performance and binary size gains achieved by `krabby`'s aggressive compilation pipeline compared to pre-compiled binaries shipped by performance-oriented Linux distributions (like CachyOS).
+
+### `vivid` (Theme Generator for `ls`)
+
+Tested on a 10,000-run `hyperfine` benchmark generating a custom theme.
+
+#### Binary Size (36% Smaller)
+- **Standard (`/usr/bin/vivid`)**: `955 KB`
+- **Krabby (`~/.cargo/bin/vivid`)**: `612 KB`
+
+#### Execution Speed (~7% Faster)
+```console
+❯ hyperfine -r 10000 "/usr/bin/vivid generate custom" "~/.cargo/bin/vivid generate custom"
+Benchmark 1: /usr/bin/vivid generate custom
+  Time (mean ± σ):       1.6 ms ±   0.4 ms    [User: 1.2 ms, System: 0.5 ms]
+  Range (min … max):     1.3 ms …   6.5 ms    10000 runs
+ 
+Benchmark 2: ~/.cargo/bin/vivid generate custom
+  Time (mean ± σ):       1.5 ms ±   0.3 ms    [User: 1.2 ms, System: 0.5 ms]
+  Range (min … max):     1.2 ms …   6.0 ms    10000 runs
+ 
+Summary
+  ~/.cargo/bin/vivid generate custom ran
+    1.07 ± 0.33 times faster than /usr/bin/vivid generate custom
+```
+
 ## ⚠️ Caveats
 
 - **Not portable**: binaries built with `-march=native` will only run correctly on the same (or a very similar) CPU. Don't ship these artifacts elsewhere.
