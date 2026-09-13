@@ -128,6 +128,30 @@ Summary
     1.01 ± 0.10 times faster than /usr/bin/eza -la /usr/lib
 ```
 
+### `cargo` (Dependency Resolution)
+
+Tested on a 500-run `hyperfine` benchmark generating a lockfile from scratch for a workspace with ~280 dependencies (`cargo generate-lockfile`). The benchmark was run with `--offline` to ensure the results measured pure CPU graph traversal and manifest parsing without being skewed by network jitter. The "Standard" binary is from `cachyos-extra-v3` (`rust`).
+
+#### Binary Size (4% Smaller)
+- **Standard (`cachyos-extra-v3`)**: `25 MB`
+- **Krabby (`krabby install cargo`)**: `24 MB`
+
+#### Execution Speed (~6% Faster)
+```console
+❯ hyperfine -r 500 --prepare "rm -f Cargo.lock" "/usr/bin/cargo generate-lockfile --offline" "~/.cargo/bin/cargo generate-lockfile --offline"
+Benchmark 1: /usr/bin/cargo generate-lockfile --offline
+  Time (mean ± σ):     228.0 ms ±   8.0 ms    [User: 171.6 ms, System: 55.6 ms]
+  Range (min … max):   218.5 ms … 315.9 ms    500 runs
+ 
+Benchmark 2: ~/.cargo/bin/cargo generate-lockfile --offline
+  Time (mean ± σ):     214.3 ms ±   3.4 ms    [User: 158.1 ms, System: 55.3 ms]
+  Range (min … max):   207.9 ms … 230.8 ms    500 runs
+ 
+Summary
+  ~/.cargo/bin/cargo generate-lockfile --offline ran
+    1.06 ± 0.04 times faster than /usr/bin/cargo generate-lockfile --offline
+```
+
 ## ⚠️ Caveats
 
 - **Not portable**: binaries built with `-march=native` will only run correctly on the same (or a very similar) CPU. Don't ship these artifacts elsewhere.
