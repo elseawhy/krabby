@@ -80,11 +80,11 @@ This section demonstrates the real-world performance and binary size gains achie
 
 ### `vivid` (Theme Generator for `ls`)
 
-Tested on a 10,000-run `hyperfine` benchmark generating a custom theme.
+Tested on a 10,000-run `hyperfine` benchmark generating a custom theme. The "Standard" binary was installed directly from the `cachyos-extra-v3` repository (which is already heavily optimized for `x86-64-v3`), making `krabby`'s additional gains even more notable.
 
 #### Binary Size (36% Smaller)
-- **Standard (`/usr/bin/vivid`)**: `955 KB`
-- **Krabby (`~/.cargo/bin/vivid`)**: `612 KB`
+- **Standard (`cachyos-extra-v3`)**: `955 KB`
+- **Krabby (`krabby install vivid`)**: `612 KB`
 
 #### Execution Speed (~7% Faster)
 ```console
